@@ -1,3 +1,5 @@
+process.env.DB_PATH = ':memory:';
+
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -40,7 +42,12 @@ function buildFingerprintDataset() {
 }
 
 test('generateMathCaptcha returns consistent question and answer', () => {
-    const { question, answer } = generateMathCaptcha();
+    for (let i = 0; i < 200; i++) {
+        assertCaptchaConsistent(generateMathCaptcha());
+    }
+});
+
+function assertCaptchaConsistent({ question, answer }) {
     assert.match(question, /^\d+ [+\-*] \d+ = \?$/);
 
     const parts = question.replace(' = ?', '').split(' ');
@@ -54,7 +61,8 @@ test('generateMathCaptcha returns consistent question and answer', () => {
             expected = num1 + num2;
             break;
         case '-':
-            expected = Math.abs(num1 - num2);
+            assert.ok(num1 >= num2, 'subtraction question must not produce a negative answer');
+            expected = num1 - num2;
             break;
         case '*':
             expected = num1 * num2;
@@ -64,7 +72,7 @@ test('generateMathCaptcha returns consistent question and answer', () => {
     }
 
     assert.equal(answer, expected);
-});
+}
 
 test('verifyMathCaptcha accepts correct answers and rejects incorrect ones', () => {
     assert.equal(verifyMathCaptcha('5', '5'), true);
