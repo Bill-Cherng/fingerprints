@@ -53,7 +53,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 2. 使用者驗證系統
 
 - **註冊** (`POST /api/auth/register`): bcryptjs 雜湊密碼,需通過數學驗證碼
-- **登入** (`POST /api/auth/login`): bcrypt 密碼驗證,需通過數學驗證碼
+- **登入** (`POST /api/auth/login`): bcrypt 密碼驗證,需通過數學驗證碼,成功後以 `session.regenerate()` 換發新 session ID
 - **Session 管理**: express-session + cookie (24小時有效期)
 - **CAPTCHA**: 自製數學驗證碼 (加減乘運算),答案儲存在 session 中
 
@@ -84,8 +84,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **指紋相關**:
   - `POST /api/fingerprint` - 提交指紋 (核心端點,處理登入/未登入邏輯)
-  - `GET /api/fingerprints` - 列出所有指紋記錄
-  - `GET /api/debug/fingerprint/:id` - 查看指紋詳細資料
+  - `GET /api/fingerprints` - 列出目前登入用戶自己的指紋記錄 (需登入)
+  - `GET /api/debug/fingerprint/:id` - 查看指紋詳細資料 (需登入，僅限自己的紀錄，其他人的回 404)
 - **驗證相關**:
   - `GET /api/captcha` - 生成數學驗證碼
   - `POST /api/auth/register` - 註冊
