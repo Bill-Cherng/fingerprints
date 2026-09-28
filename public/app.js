@@ -707,7 +707,7 @@ class MultiFingerprintApp {
             // 更新信心度
             const confidenceElement = document.getElementById('confidence');
             if (confidenceElement && data.confidence) {
-                confidenceElement.textContent = data.confidence;
+                confidenceElement.textContent = this.formatConfidence(data.confidence);
             }
             
             // 更新版本
@@ -771,7 +771,7 @@ class MultiFingerprintApp {
                         <strong>訪客 ID:</strong> <span class="highlight">${data.visitorId || 'N/A'}</span>
                     </div>
                     <div class="result-item">
-                        <strong>信心度:</strong> <span class="highlight">${data.confidence || 'N/A'}</span>
+                        <strong>信心度:</strong> <span class="highlight">${this.escapeHtml(this.formatConfidence(data.confidence))}</span>
                     </div>
                     <div class="result-item">
                         <strong>版本:</strong> <span class="highlight">${data.version || 'N/A'}</span>
@@ -931,6 +931,14 @@ class MultiFingerprintApp {
         
         // 將相似度結果添加到結果容器末尾
         resultContainer.innerHTML += similarityHtml;
+    }
+
+    // FingerprintJS 的 confidence 是 { score, comment } 物件，轉成百分比文字顯示
+    formatConfidence(confidence) {
+        const score = Number(confidence?.score);
+        if (!Number.isFinite(score)) return 'N/A';
+        const percent = `${(score * 100).toFixed(1)}%`;
+        return confidence.comment ? `${percent}（${confidence.comment}）` : percent;
     }
 
     // 跳脫 HTML 特殊字元，避免使用者名稱等外部資料被當成 HTML 執行
@@ -1211,7 +1219,12 @@ class MultiFingerprintApp {
         // 重置系統資訊顯示
         this.resetSystemInfoDisplay();
         
-        this.updateStatus('準備就緒，點擊「開始採集指紋」按鈕開始測試', 'ready');
+        // 已登入時保留登入狀態，不要被「準備就緒」訊息覆蓋
+        if (this.currentUser) {
+            this.updateUserDisplay();
+        } else {
+            this.updateStatus('準備就緒，點擊「開始採集指紋」按鈕開始測試', 'ready');
+        }
     }
 
     // 更新狀態
@@ -1423,8 +1436,8 @@ class MultiFingerprintApp {
             const data = await response.json();
 
             if (response.ok) {
-                // 註冊成功後自動登入
-                this.showSuccess('註冊成功！正在為您登入...');
+                // 註冊成功後切換到登入表單，並預填使用者名稱
+                this.showSuccess('註冊成功！請使用新帳號登入');
 
                 // 等待一下再關閉
                 setTimeout(() => {
@@ -1461,56 +1474,41 @@ class MultiFingerprintApp {
         }
     }
 
-    // 顯示表單錯誤訊息（改進的 UI）
-    showFormError(message) {
-        // 創建或更新錯誤訊息元素
-        let errorDiv = document.getElementById('formErrorMessage');
+    // 在目前顯示中的表單頂端顯示訊息；每次都重新放到可見的表單，切換登入/註冊後仍看得到
+    showFormMessage(id, className, message, duration) {
+        let messageDiv = document.getElementById(id);
 
-        if (!errorDiv) {
-            errorDiv = document.createElement('div');
-            errorDiv.id = 'formErrorMessage';
-            errorDiv.className = 'form-error-message';
-
-            const modalBody = document.querySelector('.auth-form:not([style*="display: none"])');
-            if (modalBody) {
-                modalBody.insertBefore(errorDiv, modalBody.firstChild);
-            }
+        if (!messageDiv) {
+            messageDiv = document.createElement('div');
+            messageDiv.id = id;
+            messageDiv.className = className;
         }
 
-        errorDiv.textContent = message;
-        errorDiv.style.display = 'block';
+        const visibleForm = document.querySelector('.auth-form:not([style*="display: none"])');
+        if (visibleForm && visibleForm.firstChild !== messageDiv) {
+            visibleForm.insertBefore(messageDiv, visibleForm.firstChild);
+        }
 
-        // 3 秒後自動隱藏
-        setTimeout(() => {
-            errorDiv.style.display = 'none';
-        }, 5000);
+        messageDiv.textContent = message;
+        messageDiv.style.display = 'block';
+
+        // 取消前一則訊息的計時器，避免新訊息被提早隱藏
+        this.formMessageTimers = this.formMessageTimers || {};
+        clearTimeout(this.formMessageTimers[id]);
+        this.formMessageTimers[id] = setTimeout(() => {
+            messageDiv.style.display = 'none';
+        }, duration);
     }
 
-    // 顯示成功訊息
+    // 顯示表單錯誤訊息，5 秒後自動隱藏
+    showFormError(message) {
+        this.showFormMessage('formErrorMessage', 'form-error-message', message, 5000);
+    }
+
+    // 顯示成功訊息，3 秒後自動隱藏
     showSuccess(message) {
         this.updateStatus(message, 'logged-in-user');
-
-        // 也可以在模態框中顯示
-        let successDiv = document.getElementById('formSuccessMessage');
-
-        if (!successDiv) {
-            successDiv = document.createElement('div');
-            successDiv.id = 'formSuccessMessage';
-            successDiv.className = 'form-success-message';
-
-            const modalBody = document.querySelector('.auth-form:not([style*="display: none"])');
-            if (modalBody) {
-                modalBody.insertBefore(successDiv, modalBody.firstChild);
-            }
-        }
-
-        successDiv.textContent = message;
-        successDiv.style.display = 'block';
-
-        // 3 秒後自動隱藏
-        setTimeout(() => {
-            successDiv.style.display = 'none';
-        }, 3000);
+        this.showFormMessage('formSuccessMessage', 'form-success-message', message, 3000);
     }
 
 }
@@ -1534,12 +1532,10 @@ class ThemeManager {
     }
 
     setup() {
-        // 應用儲存的主題
-        this.applyTheme(this.theme);
-
-        // 綁定切換按鈕
+        // 先取得按鈕與圖示，再套用主題，圖示才會與儲存的主題一致
         this.button = document.getElementById('themeToggle');
         this.icon = this.button?.querySelector('.theme-toggle-icon');
+        this.applyTheme(this.theme);
 
         if (this.button) {
             this.button.addEventListener('click', () => this.toggleTheme());
