@@ -81,6 +81,17 @@ function consumeCaptcha(req, userAnswer) {
 
 const SESSION_COOKIE_NAME = 'fingerprint.sid';
 
+// 正式環境必須設定 SESSION_SECRET：原始碼是公開的，內建的預設值等於公開的密鑰
+function resolveSessionSecret() {
+    if (process.env.SESSION_SECRET) {
+        return process.env.SESSION_SECRET;
+    }
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('正式環境（NODE_ENV=production）必須設定 SESSION_SECRET 環境變數');
+    }
+    return 'fingerprint-session-secret-key-2025'; // 僅供本機開發與測試
+}
+
 // JSON body 可以帶任何型別；帳號欄位必須是字串，否則 bcrypt 會拋出例外，資料庫也會存進 "[object Object]"
 function hasInvalidFieldTypes(fields) {
     return Object.values(fields).some(value => value !== undefined && value !== null && typeof value !== 'string');
@@ -214,15 +225,21 @@ const authLimiter = createRateLimiter({
 app.use(express.static(path.join(__dirname, 'public')));
 // 限流放在 session 之前：被擋下的請求不會讀寫 session 資料表
 app.use('/api', apiLimiter);
-app.use(express.json());
+// 啟動後的第一批請求可能早於建表完成（尤其在冷啟動、CPU 忙碌時），等資料庫就緒再處理，否則會查到 "no such table"
+app.use('/api', (req, res, next) => {
+    dbReady.then(() => next(), next);
+});
+// 一次指紋提交約 50KB（FingerprintJS 元件含 canvas 影像），預設 100KB 上限太接近，放寬到 1MB
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 app.use(session({
     store: sessionStore,
-    secret: process.env.SESSION_SECRET || 'fingerprint-session-secret-key-2025',
+    secret: resolveSessionSecret(),
     resave: true, // 在 Render 環境中啟用 resave
     saveUninitialized: true, // 在 Render 環境中啟用 saveUninitialized
     cookie: { 
-        secure: false, // Render 環境中暫時禁用 secure
+        // 'auto'：HTTPS 請求才加上 Secure 標記；在代理後方需設定 TRUST_PROXY 才能判斷原始請求是否為 HTTPS
+        secure: 'auto',
         httpOnly: true, // 防止 XSS 攻擊
         maxAge: SESSION_MAX_AGE, // 1 天，減少 session 存儲時間
         sameSite: 'lax' // CSRF 保護
@@ -313,8 +330,8 @@ function migrateFingerprintsTable(database, callback = () => {}) {
     });
 }
 
-// 建立資料表
-db.serialize(() => {
+// 建立資料表；dbReady 在建表與資料表遷移都完成後才 resolve
+const dbReady = new Promise((resolve, reject) => db.serialize(() => {
     db.run(FINGERPRINTS_TABLE_SQL);
 
     // 用戶帳號資料表
@@ -329,8 +346,10 @@ db.serialize(() => {
         )
     `);
 
-    migrateFingerprintsTable(db);
-});
+    migrateFingerprintsTable(db, (err) => (err ? reject(err) : resolve()));
+}));
+// 初始化失敗時，錯誤會在請求進來時由等待 dbReady 的 middleware 交給錯誤處理回報
+dbReady.catch((err) => console.error('資料庫初始化失敗:', err));
 
 // 計算多重指紋相似度函數
 function calculateMultiFingerprintSimilarity(oldData, newData) {
@@ -1318,7 +1337,18 @@ app.get('/', (req, res) => {
 });
 
 // 錯誤處理中間件
+// body-parser 等中介軟體的錯誤會帶有 4xx 狀態碼（格式錯誤 400、內容過大 413），屬於用戶端錯誤，不應回報成 500
+const CLIENT_ERROR_MESSAGES = {
+    400: '請求格式不正確',
+    413: '請求內容過大'
+};
+
 app.use((err, req, res, next) => {
+    const status = err.status || err.statusCode;
+    if (status >= 400 && status < 500) {
+        return res.status(status).json({ error: CLIENT_ERROR_MESSAGES[status] || '請求無法處理' });
+    }
+
     console.error('伺服器錯誤:', err);
     res.status(500).json({ error: '內部伺服器錯誤' });
 });
