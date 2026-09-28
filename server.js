@@ -3,9 +3,22 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Render 等平台會經過代理伺服器，需設定 TRUST_PROXY（代理層數，例如 1）才能取得使用者的真實 IP；
+// 本機直連時不要設定，否則使用者可以偽造 X-Forwarded-For 繞過依 IP 的限流
+if (process.env.TRUST_PROXY) {
+    const proxyHops = Number.parseInt(process.env.TRUST_PROXY, 10);
+    if (Number.isInteger(proxyHops) && proxyHops > 0) {
+        app.set('trust proxy', proxyHops);
+    } else {
+        // 設定錯誤時不信任代理；在代理後方會導致所有使用者共用同一個 IP 的限流額度
+        console.warn(`TRUST_PROXY 應為正整數（代理層數），目前為 "${process.env.TRUST_PROXY}"，已忽略`);
+    }
+}
 
 // 簡單的數學 CAPTCHA 驗證
 function generateMathCaptcha() {
@@ -159,9 +172,48 @@ class SQLiteSessionStore extends session.Store {
 
 const sessionStore = new SQLiteSessionStore(db);
 
+// 依 IP 限制 API 請求頻率；上限可用環境變數調整
+function envPositiveInt(name, fallback) {
+    const value = Number.parseInt(process.env[name], 10);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function createRateLimiter({ windowMs, limit, skip }) {
+    return rateLimit({
+        windowMs,
+        limit,
+        skip,
+        standardHeaders: 'draft-8', // 回傳 RateLimit / RateLimit-Policy 標頭
+        legacyHeaders: false,
+        // 前端以 JSON 的 error 欄位顯示錯誤訊息
+        message: { error: '請求過於頻繁，請稍後再試' }
+    });
+}
+
+// 所有 API 的基本上限；Render 健康檢查用的 GET /api/stats 不列入，避免健康檢查被擋而被判定服務異常
+const apiLimiter = createRateLimiter({
+    windowMs: 60 * 1000,
+    limit: envPositiveInt('RATE_LIMIT_API_PER_MINUTE', 100),
+    skip: (req) => req.method === 'GET' && req.path === '/stats'
+});
+
+// 指紋比對：未登入時每次都會與整張指紋表比對，成本最高
+const fingerprintLimiter = createRateLimiter({
+    windowMs: 60 * 1000,
+    limit: envPositiveInt('RATE_LIMIT_FINGERPRINT_PER_MINUTE', 10)
+});
+
+// 登入與註冊（合併計算）：防止密碼暴力破解與大量註冊
+const authLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    limit: envPositiveInt('RATE_LIMIT_AUTH_PER_15_MIN', 20)
+});
+
 // 中間件
 // 靜態檔案不需要 session，放在 session 之前，避免每個 CSS/JS 請求都寫入 session 資料表
 app.use(express.static(path.join(__dirname, 'public')));
+// 限流放在 session 之前：被擋下的請求不會讀寫 session 資料表
+app.use('/api', apiLimiter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(session({
@@ -686,7 +738,7 @@ function findChangedComponents(oldComponents, newComponents) {
 }
 
 // API 路由：用戶註冊
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
     const { username, email, password, captcha } = req.body;
 
     // 驗證輸入
@@ -795,7 +847,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // API 路由：用戶登入
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
     const { username, password, captcha, rememberMe } = req.body;
 
     if (hasInvalidFieldTypes({ username, password })) {
@@ -921,7 +973,7 @@ app.get('/api/auth/me', (req, res) => {
 });
 
 // API 路由：處理多重指紋資料
-app.post('/api/fingerprint', (req, res) => {
+app.post('/api/fingerprint', fingerprintLimiter, (req, res) => {
     const { 
         visitorId, 
         confidence, 

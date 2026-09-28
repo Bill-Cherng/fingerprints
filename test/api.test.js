@@ -1,4 +1,8 @@
 process.env.DB_PATH = ':memory:';
+// 這支測試從同一個 IP 註冊、登入大量帳號；限流行為由 rate-limit.test.js 另外驗證
+process.env.RATE_LIMIT_API_PER_MINUTE = '100000';
+process.env.RATE_LIMIT_FINGERPRINT_PER_MINUTE = '100000';
+process.env.RATE_LIMIT_AUTH_PER_15_MIN = '100000';
 
 // server.js 的大量 stdout 輸出會干擾 node --test 與子行程之間的通訊，測試時關閉
 console.log = () => {};
