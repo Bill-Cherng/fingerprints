@@ -803,13 +803,13 @@ class MultiFingerprintApp {
                 <h3>WebGL 指紋</h3>
                 <div class="result-grid">
                     <div class="result-item">
-                        <strong>渲染器:</strong> <span class="highlight">${data.webgl?.renderer || 'N/A'}</span>
+                        <strong>渲染器:</strong> <span class="highlight">${this.escapeHtml(data.webgl?.renderer || 'N/A')}</span>
                     </div>
                     <div class="result-item">
-                        <strong>供應商:</strong> <span class="highlight">${data.webgl?.vendor || 'N/A'}</span>
+                        <strong>供應商:</strong> <span class="highlight">${this.escapeHtml(data.webgl?.vendor || 'N/A')}</span>
                     </div>
                     <div class="result-item">
-                        <strong>版本:</strong> <span class="highlight">${data.webgl?.version || 'N/A'}</span>
+                        <strong>版本:</strong> <span class="highlight">${this.escapeHtml(data.webgl?.version || 'N/A')}</span>
                     </div>
                     <div class="result-item">
                         <strong>擴展數量:</strong> <span class="highlight">${data.webgl?.extensions?.length || 0}</span>
@@ -847,7 +847,7 @@ class MultiFingerprintApp {
                 </div>
                 <div class="components-list">
                     ${(data.plugins?.browser || []).slice(0, 5).map(plugin => 
-                        `<div class="component-item">${plugin.name}</div>`
+                        `<div class="component-item">${this.escapeHtml(plugin.name)}</div>`
                     ).join('')}
                     ${data.plugins?.browser?.length > 5 ? `<div class="component-item">... 還有 ${data.plugins.browser.length - 5} 個插件</div>` : ''}
                 </div>
@@ -914,10 +914,10 @@ class MultiFingerprintApp {
                         <div class="similarity-item ${index === 0 ? 'best-match' : ''}">
                             <div class="rank">#${index + 1}</div>
                             <div class="user-info">
-                                <strong>用戶：${match.username}</strong>
+                                <strong>用戶：${this.escapeHtml(match.username)}</strong>
                                 <div class="similarity-bar">
-                                    <div class="similarity-fill" style="width: ${match.similarity}%"></div>
-                                    <span class="similarity-percent">${match.similarity.toFixed(1)}%</span>
+                                    <div class="similarity-fill" style="width: ${Number(match.similarity) || 0}%"></div>
+                                    <span class="similarity-percent">${(Number(match.similarity) || 0).toFixed(1)}%</span>
                                 </div>
                             </div>
                         </div>
@@ -931,6 +931,16 @@ class MultiFingerprintApp {
         
         // 將相似度結果添加到結果容器末尾
         resultContainer.innerHTML += similarityHtml;
+    }
+
+    // 跳脫 HTML 特殊字元，避免使用者名稱等外部資料被當成 HTML 執行
+    escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     // 雜湊字串
@@ -1090,11 +1100,9 @@ class MultiFingerprintApp {
         const authModal = document.getElementById('authModal');
         const modalTitle = document.getElementById('modalTitle');
         
+        // showLoginForm 會一併載入登入 CAPTCHA，不要重複呼叫，否則兩個請求會互相覆蓋 session 中的答案
         this.showLoginForm();
         modalTitle.textContent = '用戶登入';
-        
-        // 載入登入 CAPTCHA
-        this.loadCaptcha('login');
         
         authModal.classList.add('show');
         document.body.style.overflow = 'hidden';
@@ -1210,12 +1218,8 @@ class MultiFingerprintApp {
     updateStatus(message, className = 'ready') {
         const statusElement = document.getElementById('userStatus');
         if (statusElement) {
-            // 對於 smart-correlation 狀態，保持 HTML 格式
-            if (className === 'smart-correlation') {
-                statusElement.innerHTML = message;
-            } else {
-                statusElement.textContent = message;
-            }
+            // 訊息可能含有使用者名稱，一律以純文字顯示；換行由 CSS white-space 處理
+            statusElement.textContent = message;
             statusElement.className = `user-status ${className}`;
         } else {
             console.warn('找不到 userStatus 元素');
@@ -1425,10 +1429,9 @@ class MultiFingerprintApp {
                 // 等待一下再關閉
                 setTimeout(() => {
                     this.closeAuthModal();
-                    this.showLoginForm();
+                    this.showAuthModal();
                     // 預填用戶名
                     document.getElementById('loginUsername').value = username;
-                    this.showAuthModal();
                 }, 1500);
             } else {
                 this.showFormError(data.error || '註冊失敗');

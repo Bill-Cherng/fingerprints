@@ -1,0 +1,35 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json engines 要求 >=18
+        node-version: [18, 20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # puppeteer 只用在手動執行的 test-fingerprint.js，CI 不需要下載 Chrome
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - name: Run tests
+        run: npm test

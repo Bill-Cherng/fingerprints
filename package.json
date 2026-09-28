@@ -10,7 +10,7 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "build": "echo 'No build step required'",
-    "test": "node --test"
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@fingerprintjs/fingerprintjs": "^4.6.2",
