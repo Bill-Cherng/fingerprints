@@ -326,3 +326,54 @@ test('logged-in sessions are stored in the sessions table and removed on logout'
     const remaining = await queryAll('SELECT sid FROM sessions WHERE sid = ?', [sid]);
     assert.deepEqual(remaining, []);
 });
+
+test('requests without a cookie do not create sessions until the session stores data', async () => {
+    const [{ count: before }] = await queryAll('SELECT COUNT(*) AS count FROM sessions');
+
+    // 健康檢查、爬蟲等不帶 cookie 的請求
+    for (let i = 0; i < 10; i++) {
+        const response = await fetch(`${baseUrl}/api/stats`);
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get('set-cookie'), null);
+    }
+    const guest = await fetch(`${baseUrl}/api/fingerprint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visitorId: 'cookieless-guest' })
+    });
+    assert.equal(guest.status, 200);
+    assert.equal(guest.headers.get('set-cookie'), null);
+
+    const [{ count: after }] = await queryAll('SELECT COUNT(*) AS count FROM sessions');
+    assert.equal(after, before);
+
+    // 取得 CAPTCHA 會把答案寫入 session，這時才發 cookie
+    const captcha = await fetch(`${baseUrl}/api/captcha`);
+    assert.match(captcha.headers.get('set-cookie') || '', /fingerprint\.sid=/);
+});
+
+test('"remember me" keeps the session for 30 days and later requests stay logged in', async () => {
+    const request = createClient();
+    const register = await request('POST', '/api/auth/register', {
+        username: 'remember',
+        password: 'secret123',
+        captcha: await solvedCaptcha(request)
+    });
+    assert.equal(register.status, 200);
+
+    const login = await request('POST', '/api/auth/login', {
+        username: 'remember',
+        password: 'secret123',
+        rememberMe: true,
+        captcha: await solvedCaptcha(request)
+    });
+    assert.equal(login.status, 200);
+
+    const sid = decodeURIComponent(request.cookie().split('=')[1]).replace(/^s:/, '').split('.')[0];
+    const [row] = await queryAll('SELECT expires FROM sessions WHERE sid = ?', [sid]);
+    assert.ok(row.expires > Date.now() + 29 * 24 * 60 * 60 * 1000, 'session should expire about 30 days from now');
+
+    const me = await request('GET', '/api/auth/me');
+    assert.equal(me.body.loggedIn, true);
+    assert.equal(me.body.user.username, 'remember');
+});

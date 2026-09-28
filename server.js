@@ -235,8 +235,11 @@ app.use(express.urlencoded({ extended: false }));
 app.use(session({
     store: sessionStore,
     secret: resolveSessionSecret(),
-    resave: true, // 在 Render 環境中啟用 resave
-    saveUninitialized: true, // 在 Render 環境中啟用 saveUninitialized
+    // 沒有變動的 session 不重寫整筆資料，只由 store.touch 更新到期時間
+    resave: false,
+    // 只有寫入過資料（CAPTCHA 答案、登入狀態）的 session 才存檔並發 cookie；
+    // 否則健康檢查、爬蟲等不帶 cookie 的請求每次都會新增一筆 session
+    saveUninitialized: false,
     cookie: { 
         // 'auto'：HTTPS 請求才加上 Secure 標記；在代理後方需設定 TRUST_PROXY 才能判斷原始請求是否為 HTTPS
         secure: 'auto',
