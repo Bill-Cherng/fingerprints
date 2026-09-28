@@ -1,0 +1,188 @@
+process.env.DB_PATH = ':memory:';
+process.env.RATE_LIMIT_API_PER_MINUTE = '100000';
+process.env.RATE_LIMIT_FINGERPRINT_PER_MINUTE = '100000';
+process.env.RATE_LIMIT_AUTH_PER_15_MIN = '100000';
+
+// server.js 的大量 stdout 輸出會干擾 node --test 與子行程之間的通訊，測試時關閉
+console.log = () => {};
+
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('path');
+const { spawn } = require('child_process');
+
+const { app, db } = require('../server');
+
+let server;
+let baseUrl;
+
+before(() => new Promise((resolve) => {
+    server = app.listen(0, () => {
+        baseUrl = `http://127.0.0.1:${server.address().port}`;
+        resolve();
+    });
+}));
+
+after(() => new Promise((resolve) => {
+    server.close(() => db.close(() => resolve()));
+}));
+
+function createClient() {
+    let cookie = null;
+    return async function request(method, urlPath, body) {
+        const response = await fetch(baseUrl + urlPath, {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                ...(cookie ? { Cookie: cookie } : {})
+            },
+            body: body ? JSON.stringify(body) : undefined,
+            signal: AbortSignal.timeout(10000)
+        });
+        const setCookie = response.headers.get('set-cookie');
+        if (setCookie) {
+            cookie = setCookie.split(';')[0];
+        }
+        return { status: response.status, body: await response.json() };
+    };
+}
+
+async function solvedCaptcha(request) {
+    const { body } = await request('GET', '/api/captcha');
+    const [num1, operator, num2] = body.question.replace(' = ?', '').split(' ');
+    const a = Number(num1);
+    const b = Number(num2);
+    return String(operator === '+' ? a + b : operator === '-' ? a - b : a * b);
+}
+
+async function register(request, fields) {
+    return request('POST', '/api/auth/register', { password: 'secret123', ...fields, captcha: await solvedCaptcha(request) });
+}
+
+async function login(request, username, password = 'secret123') {
+    return request('POST', '/api/auth/login', { username, password, captcha: await solvedCaptcha(request) });
+}
+
+function run(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, (err) => (err ? reject(err) : resolve()));
+    });
+}
+
+function queryAll(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
+    });
+}
+
+test('usernames containing @ are rejected so they cannot shadow another user\'s email', async () => {
+    const request = createClient();
+    const result = await register(request, { username: 'someone@example.com' });
+
+    assert.equal(result.status, 400);
+    assert.match(result.body.error, /@/);
+    assert.deepEqual(await queryAll("SELECT id FROM accounts WHERE username = 'someone@example.com'"), []);
+});
+
+test('logging in by email picks the email owner even if an older account uses that email as its username', async () => {
+    // 修正前註冊的舊帳號：使用者名稱剛好等於別人的 Email，且 id 較小，查詢時會先被取到
+    await run("INSERT INTO accounts (username, password_hash) VALUES ('owner@example.com', 'not-a-real-hash')");
+
+    const owner = createClient();
+    const registered = await register(owner, { username: 'owner', email: 'owner@example.com' });
+    assert.equal(registered.status, 200, JSON.stringify(registered.body));
+
+    const result = await login(owner, 'owner@example.com');
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.body.user.username, 'owner');
+});
+
+test('guest comparison only lists matches at or above 20%', async () => {
+    const close = createClient();
+    const far = createClient();
+    await register(close, { username: 'close' });
+    await register(far, { username: 'far' });
+    await login(close, 'close');
+    await login(far, 'far');
+
+    const payload = {
+        visitorId: 'close-browser',
+        components: { canvas: { value: 1 }, other: { value: 1 } },
+        hardware: { cores: 4, memory: 8, touchPoints: 0 }
+    };
+    assert.equal((await close('POST', '/api/fingerprint', payload)).status, 200);
+    // 與 payload 只有一個一般元件相同，相似度約 13%
+    assert.equal((await far('POST', '/api/fingerprint', {
+        visitorId: 'far-browser',
+        components: { canvas: { value: 9 }, other: { value: 1 } },
+        hardware: { cores: 2, memory: 4, touchPoints: 5 }
+    })).status, 200);
+
+    const guest = createClient();
+    const result = await guest('POST', '/api/fingerprint', payload);
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body.topMatches.map(match => match.username), ['close']);
+    assert.ok(result.body.topMatches.every(match => match.similarity >= 20));
+});
+
+test('fingerprint fields with the wrong type are rejected with 400', async () => {
+    const request = createClient();
+    await register(request, { username: 'typed' });
+    await login(request, 'typed');
+
+    const arrayCanvas = await request('POST', '/api/fingerprint', { visitorId: 'typed-browser', canvas: ['a'] });
+    assert.equal(arrayCanvas.status, 400);
+
+    const objectVisitorId = await request('POST', '/api/fingerprint', { visitorId: { a: 1 } });
+    assert.equal(objectVisitorId.status, 400);
+
+    const numericClientId = await request('POST', '/api/fingerprint', { visitorId: 'typed-browser', clientId: 42 });
+    assert.equal(numericClientId.status, 400);
+
+    const [account] = await queryAll("SELECT id FROM accounts WHERE username = 'typed'");
+    assert.deepEqual(await queryAll('SELECT id FROM fingerprints WHERE linked_user_id = ?', [account.id]), []);
+});
+
+test('simultaneous registrations of the same username return 400, not 500', async () => {
+    const first = createClient();
+    const second = createClient();
+    const [firstCaptcha, secondCaptcha] = await Promise.all([solvedCaptcha(first), solvedCaptcha(second)]);
+
+    // 兩個請求同時送出，重複檢查都會在任何一筆寫入前通過，只能由資料庫的 UNIQUE 限制擋下
+    const results = await Promise.all([
+        first('POST', '/api/auth/register', { username: 'racer', password: 'secret123', captcha: firstCaptcha }),
+        second('POST', '/api/auth/register', { username: 'racer', password: 'secret123', captcha: secondCaptcha })
+    ]);
+
+    assert.deepEqual(results.map(result => result.status).sort(), [200, 400]);
+    assert.equal(results.find(result => result.status === 400).body.error, '使用者名稱已存在');
+});
+
+test('the server closes the database and exits cleanly on SIGTERM', async () => {
+    const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+        env: { ...process.env, PORT: '0', DB_PATH: ':memory:', NODE_ENV: 'test' },
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('server did not start')), 10000);
+        child.stdout.on('data', (chunk) => {
+            stdout += chunk;
+            if (stdout.includes('伺服器運行在')) {
+                clearTimeout(timer);
+                resolve();
+            }
+        });
+        child.on('exit', () => reject(new Error(`server exited early: ${stdout}`)));
+    });
+
+    const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+    child.kill('SIGTERM');
+    const { code, signal } = await exited;
+
+    assert.equal(signal, null, 'process should handle SIGTERM instead of being killed by it');
+    assert.equal(code, 0);
+    assert.match(stdout, /資料庫已關閉/);
+});

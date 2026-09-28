@@ -791,6 +791,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     if (username.length < 3) {
         return res.status(400).json({ error: '使用者名稱至少需要 3 個字元' });
     }
+
+    // 登入欄位同時接受使用者名稱或 Email；使用者名稱若可以含 @，就能註冊成別人的 Email，讓對方無法用 Email 登入
+    if (username.includes('@')) {
+        return res.status(400).json({ error: '使用者名稱不可包含 @' });
+    }
     
     if (password.length < 6) {
         return res.status(400).json({ error: '密碼至少需要 6 個字元' });
@@ -845,6 +850,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
                     [username, email || null, hashedPassword],
                     function(insertErr) {
                         if (insertErr) {
+                            // 同時註冊相同名稱時，前面的重複檢查都會通過，由 UNIQUE 限制擋下，屬於用戶端錯誤
+                            if (insertErr.code === 'SQLITE_CONSTRAINT') {
+                                const error = /accounts\.email/.test(insertErr.message) ? 'Email 已被使用' : '使用者名稱已存在';
+                                return res.status(400).json({ error });
+                            }
                             console.error('建立用戶錯誤:', insertErr);
                             return res.status(500).json({ error: '註冊失敗' });
                         }
@@ -889,8 +899,9 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
 
     // 查找用戶（支援 username 或 email）
-    const query = 'SELECT * FROM accounts WHERE username = ? OR email = ?';
-    db.get(query, [username, username], async (err, user) => {
+    // 舊資料可能有使用者名稱等於別人 Email 的帳號，同時符合時以 Email 相符的帳號優先
+    const query = 'SELECT * FROM accounts WHERE username = ? OR email = ? ORDER BY CASE WHEN email = ? THEN 0 ELSE 1 END LIMIT 1';
+    db.get(query, [username, username, username], async (err, user) => {
         if (err) {
             console.error('登入查詢錯誤:', err);
             return res.status(500).json({ error: '登入失敗' });
@@ -1009,6 +1020,11 @@ app.post('/api/fingerprint', fingerprintLimiter, (req, res) => {
         collectionTime,
         timestamp 
     } = req.body;
+
+    // 這些欄位會直接存入資料庫或做雜湊，型別不對時回 400，避免存進 "[object Object]" 或在雜湊時拋出例外
+    if (hasInvalidFieldTypes({ visitorId, version, clientId, canvas })) {
+        return res.status(400).json({ error: '欄位格式不正確' });
+    }
 
     if (!visitorId) {
         return res.status(400).json({ error: '缺少訪客 ID' });
@@ -1198,6 +1214,9 @@ function handleLoggedInUserFingerprint(req, res, newData) {
     );
 }
 
+// 未登入比對時，相似度達到這個門檻（%）才列出
+const GUEST_MATCH_THRESHOLD = 20;
+
 // 處理訪客的指紋(未登入)
 function handleGuestUserFingerprint(req, res, newData) {
 
@@ -1228,12 +1247,14 @@ function handleGuestUserFingerprint(req, res, newData) {
                 }
             }
 
-            // 按相似度降序排序，取前5個
-            similarityResults.sort((a, b) => b.similarity - a.similarity);
-            const top5Matches = similarityResults.slice(0, 5);
+            // 只保留相似度 20% 以上的結果，按相似度降序排序，取前5個
+            const top5Matches = similarityResults
+                .filter(match => match.similarity >= GUEST_MATCH_THRESHOLD)
+                .sort((a, b) => b.similarity - a.similarity)
+                .slice(0, 5);
 
             // **關鍵：返回前5個最相似的用戶**
-            if (top5Matches.length > 0 && top5Matches[0].similarity >= 20) { // 20% 以上顯示相似度
+            if (top5Matches.length > 0) {
                 console.log(`找到 ${top5Matches.length} 個相似用戶，最高相似度: ${top5Matches[0].similarity.toFixed(1)}%`);
                 
                 // 生成相似度列表訊息
@@ -1386,8 +1407,8 @@ if (require.main === module) {
     });
 }
 
-// 優雅關閉
-process.on('SIGINT', () => {
+// 優雅關閉：本機按 Ctrl+C 送出 SIGINT，Render 等平台重新部署時送出 SIGTERM
+function shutdown() {
     console.log('\n正在關閉伺服器...');
     db.close((err) => {
         if (err) {
@@ -1397,4 +1418,7 @@ process.on('SIGINT', () => {
         }
         process.exit(0);
     });
-});
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

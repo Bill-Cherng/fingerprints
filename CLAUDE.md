@@ -54,8 +54,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 2. 使用者驗證系統
 
-- **註冊** (`POST /api/auth/register`): bcryptjs 雜湊密碼,需通過數學驗證碼
-- **登入** (`POST /api/auth/login`): bcrypt 密碼驗證,需通過數學驗證碼,成功後以 `session.regenerate()` 換發新 session ID
+- **註冊** (`POST /api/auth/register`): bcryptjs 雜湊密碼,需通過數學驗證碼;使用者名稱至少 3 個字元且不可包含 `@` (登入欄位同時接受使用者名稱或 Email,避免名稱冒用別人的 Email)
+- **登入** (`POST /api/auth/login`): bcrypt 密碼驗證,需通過數學驗證碼,成功後以 `session.regenerate()` 換發新 session ID;輸入同時符合某帳號的使用者名稱與另一帳號的 Email 時,以 Email 相符者優先
 - **Session 管理**: express-session + cookie (24小時有效期),session 以 `SQLiteSessionStore` 存在同一個 SQLite 資料庫的 `sessions` 表,過期資料每 15 分鐘清除
 - **CAPTCHA**: 自製數學驗證碼 (加減乘運算),答案儲存在 session 中
 
@@ -81,7 +81,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **登入 vs 未登入使用者**:
   - **已登入**: 指紋直接關聯到使用者帳號 (`linked_user_id`),更新時計算相似度
-  - **未登入**: 與資料庫所有指紋比對,返回前 5 個最相似用戶 (相似度 ≥ 20%)
+  - **未登入**: 與資料庫所有指紋比對,只保留相似度 ≥ 20% 的結果,返回其中前 5 個最相似用戶 (`GUEST_MATCH_THRESHOLD`)
 
 ### 4. API 端點總覽
 
@@ -136,6 +136,8 @@ session({
 - 資料庫查詢錯誤: 統一返回 500 狀態碼
 - 用戶端錯誤 (JSON 格式錯誤 400、內容超過 1MB 上限 413): 依錯誤本身的狀態碼返回,不回報成 500
 - CAPTCHA 驗證失敗: 返回 400 + 錯誤訊息
+- 欄位型別錯誤 (帳號欄位,以及指紋的 `visitorId`、`version`、`clientId`、`canvas` 不是字串): 返回 400
+- 同時註冊相同名稱被 UNIQUE 限制擋下: 返回 400,不回報成 500
 - Session 過期: 重新載入 CAPTCHA
 
 ## 測試與調試
@@ -150,3 +152,4 @@ session({
 - 資料庫: SQLite 檔案式資料庫,部署時需持久化儲存
 - 靜態檔案: 自動從 `public/` 目錄提供服務
 - 啟動命令: `npm start` (綁定 0.0.0.0)
+- 收到 `SIGINT` / `SIGTERM` (Render 重新部署時送出) 會先關閉資料庫再結束
