@@ -175,6 +175,10 @@ class MultiFingerprintApp {
 
             // 1. 採集 FingerprintJS V4 指紋
             console.log('採集 FingerprintJS V4 指紋...');
+            if (!this.fp) {
+                // 初始化時載入失敗（例如網路暫時中斷），採集前再試一次
+                await this.loadFingerprintJS();
+            }
             if (this.fp) {
                 const result = await this.fp.get();
                 fingerprintData.visitorId = result.visitorId;

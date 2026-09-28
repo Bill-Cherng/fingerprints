@@ -3,7 +3,6 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
-const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -89,10 +88,11 @@ app.use(session({
     },
     name: SESSION_COOKIE_NAME // 自定義 session 名稱
 }));
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // 資料庫初始化（DB_PATH 可指定其他路徑，測試時使用 :memory:）
-const db = new sqlite3.Database(process.env.DB_PATH || 'fingerprints.db');
+// 預設路徑以 server.js 所在目錄為準，不受啟動時的工作目錄影響
+const db = new sqlite3.Database(process.env.DB_PATH || path.join(__dirname, 'fingerprints.db'));
 
 // 多重指紋資料表
 // visitor_id 不設 UNIQUE：同一個瀏覽器可能被多個帳號使用，每個帳號各自保有一筆指紋紀錄
@@ -195,10 +195,6 @@ db.serialize(() => {
 
     migrateFingerprintsTable(db);
 });
-
-console.log('伺服器運行在 http://localhost:' + PORT);
-console.log('FingerprintJS V4 指紋採集測試網站已啟動');
-console.log('資料庫相容性已修正 - 版本 2025.01.01');
 
 // 計算多重指紋相似度函數
 function calculateMultiFingerprintSimilarity(oldData, newData) {

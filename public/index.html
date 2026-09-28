@@ -21,7 +21,10 @@
                 if (this.loading) return this.loadPromise;
                 
                 this.loading = true;
-                this.loadPromise = this.tryLoadSources();
+                // 結束後重設 loading，失敗時下次呼叫才會重新嘗試，而不是一直拿到同一個失敗結果
+                this.loadPromise = this.tryLoadSources().finally(() => {
+                    this.loading = false;
+                });
                 return this.loadPromise;
             }
             
