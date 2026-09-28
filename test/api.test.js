@@ -307,3 +307,18 @@ test('non-string credentials are rejected instead of crashing the server', async
     const stats = await request('GET', '/api/stats');
     assert.equal(stats.status, 200);
 });
+
+test('logged-in sessions are stored in the sessions table and removed on logout', async () => {
+    const ivy = createClient();
+    await registerAndLogin(ivy, 'ivy');
+
+    const sid = decodeURIComponent(ivy.cookie().split('=')[1]).replace(/^s:/, '').split('.')[0];
+    const [stored] = await queryAll('SELECT sess FROM sessions WHERE sid = ?', [sid]);
+    assert.ok(stored, 'session row should exist after login');
+    assert.equal(JSON.parse(stored.sess).username, 'ivy');
+
+    const logout = await ivy('POST', '/api/auth/logout');
+    assert.equal(logout.status, 200);
+    const remaining = await queryAll('SELECT sid FROM sessions WHERE sid = ?', [sid]);
+    assert.deepEqual(remaining, []);
+});
