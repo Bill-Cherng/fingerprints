@@ -588,13 +588,15 @@ function calculateWebGLSimilarity(oldWebGL, newWebGL) {
     return total > 0 ? (matches / total) * 100 : null;
 }
 
-const AUDIO_FINGERPRINT_SENTINELS = ['context_suspended', 'error'];
+// 'context_suspended'、'error' 是採集失敗的標記；'0' 是舊版前端的結果（音訊播完才讀取，每個瀏覽器都是 0），
+// 資料庫中的舊紀錄都是 '0'，一律視為無法比較
+const AUDIO_FINGERPRINT_SENTINELS = ['context_suspended', 'error', '0'];
 
 // 計算音訊相似度
 function calculateAudioSimilarity(oldAudio, newAudio) {
     if (!oldAudio || !newAudio) return 0;
     
-    // 'context_suspended'、'error' 是採集失敗時的標記，不是真正的指紋，不能拿來判定相同
+    // 這些標記不是真正的指紋，不能拿來判定相同
     const oldFingerprint = AUDIO_FINGERPRINT_SENTINELS.includes(oldAudio.fingerprint) ? undefined : oldAudio.fingerprint;
     const newFingerprint = AUDIO_FINGERPRINT_SENTINELS.includes(newAudio.fingerprint) ? undefined : newAudio.fingerprint;
     

@@ -18,11 +18,11 @@ class MultiFingerprintApp {
             console.log('正在初始化多重指紋採集系統...');
             this.updateStatus('正在載入指紋採集系統...', 'ready');
             
+            // 先初始化 Canvas 指紋：不依賴 FingerprintJS，載入失敗時 Canvas 指紋也不會缺少
+            this.initCanvasFingerprint();
+            
             // 載入 FingerprintJS
             await this.loadFingerprintJS();
-            
-            // 初始化 Canvas 指紋
-            this.initCanvasFingerprint();
             
             this.isInitialized = true;
             console.log('多重指紋採集系統初始化成功');
@@ -371,66 +371,49 @@ class MultiFingerprintApp {
     }
 
     // 採集音訊指紋
+    // 以 OfflineAudioContext 離線算出固定長度的音訊，結果只取決於瀏覽器與裝置的音訊處理實作：
+    // 不需要使用者手勢，也不受播放時機影響。原本在音訊播完後才讀取 AnalyserNode，讀到的都是 0，每個瀏覽器的指紋都相同
     async collectAudioFingerprint() {
         const audio = {};
         
         try {
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            
-            // 基本資訊
-            audio.sampleRate = audioContext.sampleRate;
-            audio.state = audioContext.state;
-            
-            // 如果 AudioContext 被暫停，嘗試恢復
-            if (audioContext.state === 'suspended') {
-                try {
-                    await audioContext.resume();
-                } catch (resumeError) {
-                    console.warn('無法恢復 AudioContext:', resumeError);
-                    audio.fingerprint = 'context_suspended';
-                    return audio;
-                }
+            // 裝置的實際採樣率（例如 44100 或 48000）；離線運算固定用 44100，不能代表裝置
+            const LiveContext = window.AudioContext || window.webkitAudioContext;
+            if (LiveContext) {
+                const liveContext = new LiveContext();
+                audio.sampleRate = liveContext.sampleRate;
+                liveContext.close().catch(() => {});
             }
             
-            // 創建振盪器
+            const OfflineContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+            const audioContext = new OfflineContext(1, 5000, 44100);
+            
+            // 三角波經過壓縮器，壓縮器的實作差異會反映在輸出的取樣值上
             const oscillator = audioContext.createOscillator();
-            const analyser = audioContext.createAnalyser();
-            const gainNode = audioContext.createGain();
+            oscillator.type = 'triangle';
+            oscillator.frequency.value = 10000;
             
-            oscillator.connect(analyser);
-            analyser.connect(gainNode);
-            gainNode.connect(audioContext.destination);
+            const compressor = audioContext.createDynamicsCompressor();
+            compressor.threshold.value = -50;
+            compressor.knee.value = 40;
+            compressor.ratio.value = 12;
+            compressor.attack.value = 0;
+            compressor.release.value = 0.25;
             
-            // 設定參數
-            oscillator.frequency.setValueAtTime(1000, audioContext.currentTime);
-            gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+            oscillator.connect(compressor);
+            compressor.connect(audioContext.destination);
+            oscillator.start(0);
             
-            // 開始和停止
-            oscillator.start();
-            oscillator.stop(audioContext.currentTime + 0.1);
+            const buffer = await audioContext.startRendering();
+            const samples = buffer.getChannelData(0);
             
-            // 等待一小段時間讓音訊處理完成
-            await new Promise(resolve => setTimeout(resolve, 150));
-            
-            // 取得頻率資料
-            const frequencyData = new Uint8Array(analyser.frequencyBinCount);
-            analyser.getByteFrequencyData(frequencyData);
-            
-            // 計算雜湊
-            let hash = 0;
-            for (let i = 0; i < frequencyData.length; i++) {
-                hash = ((hash << 5) - hash) + frequencyData[i];
-                hash = hash & hash; // 轉換為 32 位整數
+            // 取壓縮器穩定後的最後 500 個取樣的絕對值總和
+            let sum = 0;
+            for (let i = 4500; i < samples.length; i++) {
+                sum += Math.abs(samples[i]);
             }
             
-            audio.fingerprint = hash.toString(16);
-            
-            // 關閉音訊上下文
-            try {
-                await audioContext.close();
-            } catch (closeError) {
-                console.warn('關閉 AudioContext 失敗:', closeError);
-            }
+            audio.fingerprint = sum.toString();
             
         } catch (error) {
             console.error('音訊指紋採集錯誤:', error);
@@ -800,9 +783,10 @@ class MultiFingerprintApp {
                 <div class="result-item">
                     <strong>雜湊:</strong> <span class="highlight">${this.hashString(data.canvas || 'N/A')}</span>
                 </div>
+                ${this.isCanvasDataUrl(data.canvas) ? `
                 <div class="canvas-preview">
-                    <img src="${data.canvas || ''}" alt="Canvas 預覽" style="max-width: 200px; border: 1px solid #ddd;">
-                </div>
+                    <img src="${data.canvas}" alt="Canvas 預覽" style="max-width: 200px; border: 1px solid #ddd;">
+                </div>` : ''}
             </div>
 
             <div class="fingerprintjs-section">
@@ -866,7 +850,7 @@ class MultiFingerprintApp {
                         <strong>CPU 核心:</strong> <span class="highlight">${data.hardware?.cores || 'N/A'}</span>
                     </div>
                     <div class="result-item">
-                        <strong>記憶體:</strong> <span class="highlight">${data.hardware?.memory || 'N/A'} GB</span>
+                        <strong>記憶體:</strong> <span class="highlight">${Number.isFinite(data.hardware?.memory) ? `${data.hardware.memory} GB` : 'N/A'}</span>
                     </div>
                     <div class="result-item">
                         <strong>觸控點:</strong> <span class="highlight">${data.hardware?.touchPoints || 0}</span>
@@ -945,6 +929,11 @@ class MultiFingerprintApp {
         if (!Number.isFinite(score)) return 'N/A';
         const percent = `${(score * 100).toFixed(1)}%`;
         return confidence.comment ? `${percent}（${confidence.comment}）` : percent;
+    }
+
+    // 採集失敗時 canvas 為 'error'，不是圖片；只有 PNG data URL 才顯示預覽，避免對不存在的網址發出請求
+    isCanvasDataUrl(value) {
+        return typeof value === 'string' && value.startsWith('data:image/png;base64,');
     }
 
     // 跳脫 HTML 特殊字元，避免使用者名稱等外部資料被當成 HTML 執行
@@ -1142,6 +1131,8 @@ class MultiFingerprintApp {
             
             if (questionElement) {
                 questionElement.textContent = data.question;
+                // 清除先前載入失敗時設定的紅色
+                questionElement.style.color = '';
                 console.log(`已更新 ${type} CAPTCHA 問題:`, data.question);
             } else {
                 console.error(`找不到 ${type}CaptchaQuestion 元素`);

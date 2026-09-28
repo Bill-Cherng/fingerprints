@@ -208,6 +208,20 @@ test('audio collection failure markers are not treated as matching fingerprints'
     assert.equal(calculateAudioSimilarity({ fingerprint: 'abc', sampleRate: 48000 }, { fingerprint: 'abc', sampleRate: 48000 }), 100);
 });
 
+test('the legacy audio fingerprint "0" is never treated as a match', () => {
+    // 舊版前端在音訊播完後才讀取頻譜，每個瀏覽器都得到 '0'；不同裝置不能因此被判定為相同
+    assert.equal(
+        calculateAudioSimilarity({ fingerprint: '0', sampleRate: 48000 }, { fingerprint: '0', sampleRate: 44100 }),
+        0
+    );
+    assert.equal(calculateAudioSimilarity({ fingerprint: '0' }, { fingerprint: '0' }), null);
+    // 舊紀錄與新版前端的結果比較時，只能依採樣率給部分分數
+    assert.equal(
+        calculateAudioSimilarity({ fingerprint: '0', sampleRate: 48000 }, { fingerprint: '124.04347527516074', sampleRate: 48000 }),
+        50
+    );
+});
+
 test('layers without comparable data are skipped instead of counted as a match', () => {
     // 兩個平台與 canvas 都不同的使用者；硬體資訊兩邊都是瀏覽器不支援的值
     const similarity = calculateMultiFingerprintSimilarity(
