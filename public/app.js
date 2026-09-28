@@ -1401,6 +1401,11 @@ class MultiFingerprintApp {
             return;
         }
 
+        if (username.includes('@')) {
+            this.showFormError('用戶名不可包含 @');
+            return;
+        }
+
         if (password.length < 6) {
             this.showFormError('密碼至少需要 6 個字元');
             return;
