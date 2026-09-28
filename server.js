@@ -478,11 +478,11 @@ function calculateWebGLSimilarity(oldWebGL, newWebGL) {
     if (oldWebGL.version === newWebGL.version) matches++;
     total += 3;
     
-    // 比較擴展
+    // 比較擴展（權重 0.5）；calculateArraySimilarity 回傳 0-100 的百分比，需先換算成 0-1 再與上面的計分相加
     const oldExtensions = oldWebGL.extensions || [];
     const newExtensions = newWebGL.extensions || [];
     const extensionSimilarity = calculateArraySimilarity(oldExtensions, newExtensions);
-    matches += extensionSimilarity * 0.5;
+    matches += (extensionSimilarity / 100) * 0.5;
     total += 0.5;
     
     return total > 0 ? (matches / total) * 100 : 0;

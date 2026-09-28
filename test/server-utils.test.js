@@ -9,7 +9,8 @@ const {
     verifyMathCaptcha,
     calculateMultiFingerprintSimilarity,
     findChangedComponents,
-    calculateArraySimilarity
+    calculateArraySimilarity,
+    calculateWebGLSimilarity
 } = require('../server');
 
 function buildFingerprintDataset() {
@@ -130,6 +131,43 @@ test('findChangedComponents reports added, changed, and removed entries', () => 
 test('calculateArraySimilarity handles partial overlap', () => {
     const similarity = calculateArraySimilarity(['A', 'B', 'C'], ['B', 'C', 'D']);
     assert.equal(similarity, (2 / 4) * 100);
+});
+
+test('calculateWebGLSimilarity stays within 0-100', () => {
+    const extensions = ['EXT_a', 'EXT_b', 'WEBGL_c'];
+    const gpu = { renderer: 'NVIDIA', vendor: 'NV', version: 'WebGL 1.0', extensions };
+
+    assert.equal(calculateWebGLSimilarity(gpu, { ...gpu }), 100);
+
+    // renderer/vendor/version 全不同、只有擴展清單相同：只拿到擴展的 0.5 / 3.5
+    const other = { renderer: 'Apple M1', vendor: 'Apple', version: 'WebGL 2.0', extensions };
+    const similarity = calculateWebGLSimilarity(gpu, other);
+    assert.ok(Math.abs(similarity - (0.5 / 3.5) * 100) < 1e-9, `got ${similarity}`);
+});
+
+test('two different users sharing only WebGL extensions are not reported as a match', () => {
+    const extensions = ['EXT_a', 'EXT_b', 'WEBGL_c'];
+    const alice = {
+        components: { platform: { value: 'Win32' }, canvas: { value: 'c1' }, fonts: { value: ['Arial'] } },
+        canvas: 'hash-1',
+        webgl: { renderer: 'NVIDIA', vendor: 'NV', version: 'WebGL 1.0', extensions },
+        audio: { fingerprint: 'a1', sampleRate: 48000 },
+        fonts: { available: ['Arial', 'Verdana'] },
+        hardware: { cores: 16, memory: 32, touchPoints: 0 },
+        custom: { screen: { width: 1920, height: 1080, colorDepth: 24 }, timezone: 'Asia/Taipei' }
+    };
+    const bob = {
+        components: { platform: { value: 'MacIntel' }, canvas: { value: 'c2' }, fonts: { value: ['Helvetica'] } },
+        canvas: 'hash-2',
+        webgl: { renderer: 'Apple M1', vendor: 'Apple', version: 'WebGL 2.0', extensions },
+        audio: { fingerprint: 'b2', sampleRate: 44100 },
+        fonts: { available: ['Helvetica'] },
+        hardware: { cores: 8, memory: 8, touchPoints: 5 },
+        custom: { screen: { width: 1440, height: 900, colorDepth: 30 }, timezone: 'Europe/London' }
+    };
+
+    const similarity = calculateMultiFingerprintSimilarity(alice, bob);
+    assert.ok(similarity < 20, `expected a low similarity, got ${similarity}`);
 });
 
 after(() => {

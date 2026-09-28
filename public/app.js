@@ -18,9 +18,6 @@ class MultiFingerprintApp {
             console.log('正在初始化多重指紋採集系統...');
             this.updateStatus('正在載入指紋採集系統...', 'ready');
             
-            // 初始化 Client ID
-            this.initClientId();
-            
             // 載入 FingerprintJS
             await this.loadFingerprintJS();
             
@@ -165,6 +162,11 @@ class MultiFingerprintApp {
             this.updateStatus('正在採集多重指紋...', 'collecting');
             this.disableButton('collectBtn');
             
+            // Client ID 會永久存在瀏覽器的 localStorage，只在使用者同意隱私聲明、開始採集後才建立
+            if (!this.clientId) {
+                this.initClientId();
+            }
+
             const startTime = Date.now();
             const fingerprintData = {
                 timestamp: startTime,
