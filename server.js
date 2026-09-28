@@ -304,16 +304,20 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
     // 3. WebGL 指紋相似度 (權重 15%)
     if (oldData.webgl && newData.webgl && Object.keys(oldData.webgl).length > 0 && Object.keys(newData.webgl).length > 0) {
         const webglSimilarity = calculateWebGLSimilarity(oldData.webgl, newData.webgl);
-        similarities.push(webglSimilarity);
-        weights.push(0.15);
+        if (webglSimilarity !== null) {
+            similarities.push(webglSimilarity);
+            weights.push(0.15);
+        }
         console.log('WebGL 相似度:', webglSimilarity);
     }
     
     // 4. 音訊指紋相似度 (權重 10%)
     if (oldData.audio && newData.audio && Object.keys(oldData.audio).length > 0 && Object.keys(newData.audio).length > 0) {
         const audioSimilarity = calculateAudioSimilarity(oldData.audio, newData.audio);
-        similarities.push(audioSimilarity);
-        weights.push(0.1);
+        if (audioSimilarity !== null) {
+            similarities.push(audioSimilarity);
+            weights.push(0.1);
+        }
         console.log('Audio 相似度:', audioSimilarity);
     }
     
@@ -328,16 +332,20 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
     // 6. 硬體指紋相似度 (權重 5%)
     if (oldData.hardware && newData.hardware && Object.keys(oldData.hardware).length > 0 && Object.keys(newData.hardware).length > 0) {
         const hardwareSimilarity = calculateHardwareSimilarity(oldData.hardware, newData.hardware);
-        similarities.push(hardwareSimilarity);
-        weights.push(0.05);
+        if (hardwareSimilarity !== null) {
+            similarities.push(hardwareSimilarity);
+            weights.push(0.05);
+        }
         console.log('Hardware 相似度:', hardwareSimilarity);
     }
     
     // 7. 自定義指紋相似度 (權重 5%)
     if (oldData.custom && newData.custom && Object.keys(oldData.custom).length > 0 && Object.keys(newData.custom).length > 0) {
         const customSimilarity = calculateCustomSimilarity(oldData.custom, newData.custom);
-        similarities.push(customSimilarity);
-        weights.push(0.05);
+        if (customSimilarity !== null) {
+            similarities.push(customSimilarity);
+            weights.push(0.05);
+        }
         console.log('Custom 相似度:', customSimilarity);
     }
     
@@ -438,13 +446,33 @@ function calculateFingerprintJSSimilarity(oldComponents, newComponents) {
     // 計算基本相似度
     const basicSimilarity = (matchingComponents / totalComponents) * 100;
     
-    // 如果重要元件匹配度很高，提升整體分數
-    const importantSimilarity = importantTotal > 0 ? (importantMatches / importantTotal) * 100 : 100;
-    
+    // 沒有任何重要元件可比對時只看一般元件；原本預設重要元件 100%，會讓完全不同的元件也得到 70%
+    if (importantTotal === 0) {
+        return Math.round(basicSimilarity * 10) / 10;
+    }
+
     // 綜合計算（重要元件權重 70%，一般元件權重 30%）
+    const importantSimilarity = (importantMatches / importantTotal) * 100;
     const finalSimilarity = (importantSimilarity * 0.7) + (basicSimilarity * 0.3);
     
     return Math.round(finalSimilarity * 10) / 10;
+}
+
+// 瀏覽器不支援或未採集到的值；前端在不支援時會送出 'unknown'
+function isUnknownValue(value) {
+    return value === undefined || value === null || value === '' || value === 'unknown';
+}
+
+// 逐欄比對 [舊值, 新值]；兩邊都沒有值的欄位不列入計算，避免把「都缺少」當成「相同」
+function compareKnownFields(pairs) {
+    let matches = 0;
+    let total = 0;
+    for (const [oldValue, newValue] of pairs) {
+        if (isUnknownValue(oldValue) && isUnknownValue(newValue)) continue;
+        total++;
+        if (oldValue === newValue) matches++;
+    }
+    return { matches, total };
 }
 
 // 計算 Canvas 相似度
@@ -469,31 +497,43 @@ function calculateCanvasSimilarity(oldCanvas, newCanvas) {
 function calculateWebGLSimilarity(oldWebGL, newWebGL) {
     if (!oldWebGL || !newWebGL) return 0;
     
-    let matches = 0;
-    let total = 0;
-    
     // 比較基本資訊
-    if (oldWebGL.renderer === newWebGL.renderer) matches++;
-    if (oldWebGL.vendor === newWebGL.vendor) matches++;
-    if (oldWebGL.version === newWebGL.version) matches++;
-    total += 3;
+    let { matches, total } = compareKnownFields([
+        [oldWebGL.renderer, newWebGL.renderer],
+        [oldWebGL.vendor, newWebGL.vendor],
+        [oldWebGL.version, newWebGL.version]
+    ]);
     
     // 比較擴展（權重 0.5）；calculateArraySimilarity 回傳 0-100 的百分比，需先換算成 0-1 再與上面的計分相加
     const oldExtensions = oldWebGL.extensions || [];
     const newExtensions = newWebGL.extensions || [];
-    const extensionSimilarity = calculateArraySimilarity(oldExtensions, newExtensions);
-    matches += (extensionSimilarity / 100) * 0.5;
-    total += 0.5;
+    if (oldExtensions.length > 0 || newExtensions.length > 0) {
+        const extensionSimilarity = calculateArraySimilarity(oldExtensions, newExtensions);
+        matches += (extensionSimilarity / 100) * 0.5;
+        total += 0.5;
+    }
     
-    return total > 0 ? (matches / total) * 100 : 0;
+    // 沒有任何可比較的資料時回傳 null，由呼叫端略過這一層
+    return total > 0 ? (matches / total) * 100 : null;
 }
+
+const AUDIO_FINGERPRINT_SENTINELS = ['context_suspended', 'error'];
 
 // 計算音訊相似度
 function calculateAudioSimilarity(oldAudio, newAudio) {
     if (!oldAudio || !newAudio) return 0;
     
-    if (oldAudio.fingerprint === newAudio.fingerprint) {
+    // 'context_suspended'、'error' 是採集失敗時的標記，不是真正的指紋，不能拿來判定相同
+    const oldFingerprint = AUDIO_FINGERPRINT_SENTINELS.includes(oldAudio.fingerprint) ? undefined : oldAudio.fingerprint;
+    const newFingerprint = AUDIO_FINGERPRINT_SENTINELS.includes(newAudio.fingerprint) ? undefined : newAudio.fingerprint;
+    
+    if (!isUnknownValue(oldFingerprint) && oldFingerprint === newFingerprint) {
         return 100;
+    }
+    
+    if (isUnknownValue(oldAudio.sampleRate) && isUnknownValue(newAudio.sampleRate)) {
+        // 指紋與採樣率都無法比較
+        return isUnknownValue(oldFingerprint) && isUnknownValue(newFingerprint) ? null : 0;
     }
     
     if (oldAudio.sampleRate === newAudio.sampleRate) {
@@ -517,37 +557,31 @@ function calculateFontsSimilarity(oldFonts, newFonts) {
 function calculateHardwareSimilarity(oldHardware, newHardware) {
     if (!oldHardware || !newHardware) return 0;
     
-    let matches = 0;
-    let total = 0;
+    const { matches, total } = compareKnownFields([
+        [oldHardware.cores, newHardware.cores],
+        [oldHardware.memory, newHardware.memory],
+        [oldHardware.touchPoints, newHardware.touchPoints]
+    ]);
     
-    if (oldHardware.cores === newHardware.cores) matches++;
-    if (oldHardware.memory === newHardware.memory) matches++;
-    if (oldHardware.touchPoints === newHardware.touchPoints) matches++;
-    total += 3;
-    
-    return total > 0 ? (matches / total) * 100 : 0;
+    return total > 0 ? (matches / total) * 100 : null;
 }
 
 // 計算自定義指紋相似度
 function calculateCustomSimilarity(oldCustom, newCustom) {
     if (!oldCustom || !newCustom) return 0;
     
-    let matches = 0;
-    let total = 0;
+    const oldScreen = oldCustom.screen || {};
+    const newScreen = newCustom.screen || {};
     
-    // 比較螢幕資訊
-    if (oldCustom.screen && newCustom.screen) {
-        if (oldCustom.screen.width === newCustom.screen.width) matches++;
-        if (oldCustom.screen.height === newCustom.screen.height) matches++;
-        if (oldCustom.screen.colorDepth === newCustom.screen.colorDepth) matches++;
-        total += 3;
-    }
+    // 比較螢幕資訊與時區
+    const { matches, total } = compareKnownFields([
+        [oldScreen.width, newScreen.width],
+        [oldScreen.height, newScreen.height],
+        [oldScreen.colorDepth, newScreen.colorDepth],
+        [oldCustom.timezone, newCustom.timezone]
+    ]);
     
-    // 比較時區
-    if (oldCustom.timezone === newCustom.timezone) matches++;
-    total++;
-    
-    return total > 0 ? (matches / total) * 100 : 0;
+    return total > 0 ? (matches / total) * 100 : null;
 }
 
 // 計算陣列相似度

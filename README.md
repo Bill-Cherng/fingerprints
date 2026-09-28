@@ -8,7 +8,7 @@
 - 支援用戶註冊和登入系統
 - 智慧指紋相似度比對演算法
 - 即時視窗大小監控
-- reCAPTCHA 驗證保護
+- 註冊與登入需通過數學驗證碼（自製 CAPTCHA）
 - 響應式設計
 
 ## 本地開發
@@ -26,6 +26,11 @@ npm run dev
 ### 啟動生產伺服器
 ```bash
 npm start
+```
+
+### 執行測試
+```bash
+npm test
 ```
 
 ## 部署到 Render
@@ -49,10 +54,14 @@ npm start
    - **Start Command**: `npm start`
    - **Plan**: 選擇免費方案
 
-### 3. 環境變數設定（可選）
-如果需要，可以在 Render 的環境變數中設定：
+### 3. 環境變數設定
+在 Render 的環境變數中設定：
+- `SESSION_SECRET`：session 簽章用的密鑰，正式環境務必設定（`render.yaml` 會自動產生）
 - `NODE_ENV`: `production`
-- 其他自訂環境變數
+- `DB_PATH`（可選）：SQLite 資料庫檔案路徑，預設為專案目錄下的 `fingerprints.db`
+
+### 資料保存注意事項
+帳號、指紋與 session 都存在同一個 SQLite 檔案中。Render 免費方案的磁碟是暫存的，**每次重新部署都會清空資料庫**。若需要保留資料，請掛載 persistent disk 並將 `DB_PATH` 指向該磁碟，或改用外部資料庫。
 
 ### 4. 部署
 點擊 "Create Web Service"，Render 會自動：
@@ -70,17 +79,21 @@ fingerprints/
 ├── public/                # 靜態檔案
 │   ├── index.html         # 主頁面
 │   ├── style.css          # 樣式
-│   └── app.js             # 前端邏輯
-├── fingerprints.db        # SQLite 資料庫（本地開發）
+│   ├── app.js             # 前端邏輯
+│   └── lib/               # FingerprintJS 本地版本
+├── test/                  # 測試（node --test）
+├── fingerprints.db        # SQLite 資料庫（執行時自動建立，不納入版控）
 └── README.md              # 專案說明
 ```
 
 ## API 端點
 
 - `GET /` - 主頁面
-- `POST /api/fingerprint` - 提交指紋資料
-- `GET /api/users` - 取得所有用戶
+- `POST /api/fingerprint` - 提交指紋資料（未登入時只比對不儲存，登入後與帳號綁定儲存）
+- `GET /api/fingerprints` - 列出目前登入用戶自己的指紋紀錄（需登入）
+- `GET /api/debug/fingerprint/:id` - 查看自己的指紋詳細資料（需登入）
 - `GET /api/stats` - 取得統計資料
+- `GET /api/captcha` - 取得數學驗證碼
 - `POST /api/auth/register` - 用戶註冊
 - `POST /api/auth/login` - 用戶登入
 - `POST /api/auth/logout` - 用戶登出
@@ -88,10 +101,10 @@ fingerprints/
 
 ## 技術堆疊
 
-- **後端**: Node.js, Express.js, SQLite
+- **後端**: Node.js, Express.js, SQLite（資料與 session 皆存於 SQLite）
 - **前端**: HTML5, CSS3, JavaScript (ES6+)
 - **指紋採集**: FingerprintJS V4
-- **驗證**: reCAPTCHA v2
+- **驗證**: express-session + bcryptjs，數學驗證碼
 - **部署**: Render
 
 ## 授權
