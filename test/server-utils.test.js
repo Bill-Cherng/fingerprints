@@ -10,7 +10,11 @@ const {
     calculateMultiFingerprintSimilarity,
     findChangedComponents,
     calculateArraySimilarity,
-    calculateWebGLSimilarity
+    calculateWebGLSimilarity,
+    calculateFingerprintJSSimilarity,
+    calculateAudioSimilarity,
+    calculateHardwareSimilarity,
+    calculateCustomSimilarity
 } = require('../server');
 
 function buildFingerprintDataset() {
@@ -168,6 +172,50 @@ test('two different users sharing only WebGL extensions are not reported as a ma
 
     const similarity = calculateMultiFingerprintSimilarity(alice, bob);
     assert.ok(similarity < 20, `expected a low similarity, got ${similarity}`);
+});
+
+test('fields missing on both sides are not counted as a match', () => {
+    // 瀏覽器不支援 deviceMemory 時前端送出 'unknown'；兩邊都 unknown 不代表相同
+    assert.equal(
+        calculateHardwareSimilarity({ cores: 8, memory: 'unknown', touchPoints: 0 }, { cores: 4, memory: 'unknown', touchPoints: 0 }),
+        50
+    );
+    assert.equal(calculateHardwareSimilarity({ battery: 'x' }, { battery: 'y' }), null);
+
+    assert.equal(calculateCustomSimilarity({ language: 'en' }, { language: 'zh' }), null);
+    assert.equal(calculateCustomSimilarity({ timezone: 'Asia/Taipei' }, { timezone: 'Europe/London' }), 0);
+
+    assert.equal(calculateWebGLSimilarity({ pixelData: [1] }, { pixelData: [2] }), null);
+});
+
+test('FingerprintJS similarity without important components only uses the general components', () => {
+    const similarity = calculateFingerprintJSSimilarity(
+        { math: { value: 1 }, vendor: { value: 'a' } },
+        { math: { value: 2 }, vendor: { value: 'b' } }
+    );
+    assert.equal(similarity, 0);
+});
+
+test('audio collection failure markers are not treated as matching fingerprints', () => {
+    assert.equal(
+        calculateAudioSimilarity(
+            { fingerprint: 'context_suspended', sampleRate: 48000 },
+            { fingerprint: 'context_suspended', sampleRate: 44100 }
+        ),
+        0
+    );
+    assert.equal(calculateAudioSimilarity({ fingerprint: 'error' }, { fingerprint: 'error' }), null);
+    assert.equal(calculateAudioSimilarity({ fingerprint: 'abc', sampleRate: 48000 }, { fingerprint: 'abc', sampleRate: 48000 }), 100);
+});
+
+test('layers without comparable data are skipped instead of counted as a match', () => {
+    // 兩個平台與 canvas 都不同的使用者；硬體資訊兩邊都是瀏覽器不支援的值
+    const similarity = calculateMultiFingerprintSimilarity(
+        { components: { platform: { value: 'Win32' } }, canvas: 'canvas-a', hardware: { battery: 'not_supported' } },
+        { components: { platform: { value: 'MacIntel' } }, canvas: 'canvas-b', hardware: { battery: 'not_supported' } }
+    );
+    // 硬體層應被略過；若把「都缺少」當成相同，會被灌成約 7.7%
+    assert.equal(similarity, 0);
 });
 
 after(() => {

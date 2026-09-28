@@ -41,7 +41,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 1. 指紋採集 (前端 app.js)
 
-- 使用 FingerprintJS V4 Pro (`@fingerprintjs/fingerprintjs@4.6.2`) 採集基礎指紋
+- 使用 FingerprintJS V4 開源版 (`@fingerprintjs/fingerprintjs@4.6.2`) 採集基礎指紋
 - 額外採集 7 種自訂指紋:
   - Canvas 指紋 (繪圖渲染特徵)
   - WebGL 指紋 (GPU/驅動程式特徵)
@@ -61,7 +61,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 3. 指紋比對與相似度演算法 (server.js)
 
-**關鍵函數**: `calculateMultiFingerprintSimilarity()` (server.js:114-201)
+**關鍵函數**: `calculateMultiFingerprintSimilarity()` (server.js)
 
 - **多層次加權計算**:
   - FingerprintJS V4 相似度: 40% 權重 (最重要)
@@ -71,11 +71,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - 字體指紋: 10%
   - 硬體指紋: 5%
   - 自訂指紋: 5%
+  - 某一層兩邊都沒有可比較的資料時 (欄位缺少、瀏覽器不支援而為 `'unknown'`、音訊採集失敗的 `'context_suspended'`/`'error'`),該層函式回傳 `null` 並從加權中略過,不會被當成相同
 
-- **FingerprintJS 比對邏輯** (`calculateFingerprintJSSimilarity`, server.js:203-279):
+- **FingerprintJS 比對邏輯** (`calculateFingerprintJSSimilarity`, server.js):
   - 重要元件 (canvas, webgl, audio, fonts 等) 權重 70%
-  - 一般元件權重 30%
-  - 自動忽略易變動元件 (viewport, timezone)
+  - 一般元件權重 30%;沒有任何重要元件時只看一般元件
+  - 易變動元件 (viewport, timezone) 不同時仍給一半分數
   - 自動忽略 session 相關元件 (localStorage, sessionStorage)
 
 - **登入 vs 未登入使用者**:
@@ -99,18 +100,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 重要實作細節
 
-### Session 配置 (Render 部署適配)
+### Session 配置
 
 ```javascript
 session({
-  resave: true,  // Render 環境需啟用
-  saveUninitialized: true,  // Render 環境需啟用
+  store: sessionStore,  // SQLiteSessionStore,存在同一個 SQLite 資料庫的 sessions 表
+  resave: true,
+  saveUninitialized: true,
   cookie: {
-    secure: false,  // Render 環境暫時禁用 HTTPS only
-    maxAge: 24 * 60 * 60 * 1000  // 1 天
+    secure: false,  // 目前未強制 HTTPS only
+    httpOnly: true,
+    maxAge: SESSION_MAX_AGE,  // 1 天
+    sameSite: 'lax'
   }
 })
 ```
+
+- `express.static` 放在 session 之前,靜態檔案請求不會讀寫 sessions 表
 
 ### 指紋相似度閾值
 
