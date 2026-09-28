@@ -94,7 +94,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `GET /api/auth/me` - 取得目前使用者資訊
 - **統計相關**:
   - `GET /api/stats` - 總體統計 (指紋數、關聯使用者數、平均信賴度)
-  - `GET /api/identify` - 識別可能的使用者 (基於指紋相似度)
 
 ## 重要實作細節
 
@@ -115,7 +114,6 @@ session({
 
 - 顯示相似度: ≥ 20% (未登入使用者比對)
 - 高相似度警告: < 90% (已登入使用者指紋變更)
-- 可能關聯到使用者: ≥ 70% (`/api/identify` 端點)
 
 ### 錯誤處理
 

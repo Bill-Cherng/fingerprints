@@ -260,3 +260,8 @@ test('logout destroys the session and clears the cookie', async () => {
     const me = await henry('GET', '/api/auth/me');
     assert.equal(me.body.loggedIn, false);
 });
+
+test('the removed /api/identify endpoint is no longer served', async () => {
+    const response = await fetch(`${baseUrl}/api/identify?visitorId=anything`);
+    assert.equal(response.status, 404);
+});
