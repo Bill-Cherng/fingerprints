@@ -45,7 +45,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 額外採集 7 種自訂指紋:
   - Canvas 指紋 (繪圖渲染特徵)
   - WebGL 指紋 (GPU/驅動程式特徵)
-  - 音訊指紋 (AudioContext 處理特徵)
+  - 音訊指紋 (以 OfflineAudioContext 離線運算三角波經壓縮器的輸出,另記錄裝置的實際採樣率)
   - 字體指紋 (已安裝字體列表)
   - 插件指紋 (瀏覽器插件資訊)
   - 硬體指紋 (CPU、記憶體、觸控點)
@@ -71,7 +71,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - 字體指紋: 10%
   - 硬體指紋: 5%
   - 自訂指紋: 5%
-  - 某一層兩邊都沒有可比較的資料時 (欄位缺少、瀏覽器不支援而為 `'unknown'`、音訊採集失敗的 `'context_suspended'`/`'error'`),該層函式回傳 `null` 並從加權中略過,不會被當成相同
+  - 某一層兩邊都沒有可比較的資料時 (欄位缺少、瀏覽器不支援而為 `'unknown'`、音訊採集失敗的 `'context_suspended'`/`'error'`,以及舊版前端一律產生的 `'0'`),該層函式回傳 `null` 並從加權中略過,不會被當成相同
 
 - **FingerprintJS 比對邏輯** (`calculateFingerprintJSSimilarity`, server.js):
   - 重要元件 (canvas, webgl, audio, fonts 等) 權重 70%
