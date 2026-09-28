@@ -123,6 +123,14 @@ session({
 - 顯示相似度: ≥ 20% (未登入使用者比對)
 - 高相似度警告: < 90% (已登入使用者指紋變更)
 
+### API 限流 (express-rate-limit,依 IP)
+
+- 所有 `/api`: 每分鐘 100 次 (`GET /api/stats` 除外,供 Render 健康檢查)
+- `POST /api/fingerprint`: 每分鐘 10 次 (未登入時會掃描整張指紋表)
+- 登入 + 註冊: 每 15 分鐘合計 20 次
+- 超過上限回傳 429 與 `{ error: '請求過於頻繁，請稍後再試' }`
+- 在代理後方需設定 `TRUST_PROXY` 才能取得真實 IP;測試中以 `RATE_LIMIT_*` 環境變數調整上限
+
 ### 錯誤處理
 
 - 資料庫查詢錯誤: 統一返回 500 狀態碼
@@ -137,7 +145,7 @@ session({
 
 ## 部署注意事項
 
-- 環境變數: `PORT` (Render 自動設定), `SESSION_SECRET` (建議設定)
+- 環境變數: `PORT` (Render 自動設定), `SESSION_SECRET` (建議設定), `TRUST_PROXY` (代理層數,Render 為 1), `RATE_LIMIT_*` (限流上限)
 - 資料庫: SQLite 檔案式資料庫,部署時需持久化儲存
 - 靜態檔案: 自動從 `public/` 目錄提供服務
 - 啟動命令: `npm start` (綁定 0.0.0.0)

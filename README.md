@@ -59,6 +59,10 @@ npm test
 - `SESSION_SECRET`：session 簽章用的密鑰，正式環境務必設定（`render.yaml` 會自動產生）
 - `NODE_ENV`: `production`
 - `DB_PATH`（可選）：SQLite 資料庫檔案路徑，預設為專案目錄下的 `fingerprints.db`
+- `TRUST_PROXY`：前方代理伺服器的層數，Render 設為 `1`（`render.yaml` 已設定）。部署在代理後方卻沒設定時，所有使用者會被視為同一個 IP，共用限流額度；本機直連時不要設定
+- `RATE_LIMIT_API_PER_MINUTE`（可選）：每個 IP 每分鐘可呼叫 API 的次數，預設 100（`GET /api/stats` 不計）
+- `RATE_LIMIT_FINGERPRINT_PER_MINUTE`（可選）：每個 IP 每分鐘可提交指紋的次數，預設 10
+- `RATE_LIMIT_AUTH_PER_15_MIN`（可選）：每個 IP 每 15 分鐘可登入加註冊的次數，預設 20
 
 ### 資料保存注意事項
 帳號、指紋與 session 都存在同一個 SQLite 檔案中。Render 免費方案的磁碟是暫存的，**每次重新部署都會清空資料庫**。若需要保留資料，請掛載 persistent disk 並將 `DB_PATH` 指向該磁碟，或改用外部資料庫。
