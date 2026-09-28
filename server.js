@@ -69,6 +69,11 @@ function consumeCaptcha(req, userAnswer) {
 
 const SESSION_COOKIE_NAME = 'fingerprint.sid';
 
+// JSON body 可以帶任何型別；帳號欄位必須是字串，否則 bcrypt 會拋出例外，資料庫也會存進 "[object Object]"
+function hasInvalidFieldTypes(fields) {
+    return Object.values(fields).some(value => value !== undefined && value !== null && typeof value !== 'string');
+}
+
 // 中間件
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -571,6 +576,10 @@ app.post('/api/auth/register', async (req, res) => {
     const { username, email, password, captcha } = req.body;
 
     // 驗證輸入
+    if (hasInvalidFieldTypes({ username, email, password })) {
+        return res.status(400).json({ error: '欄位格式不正確' });
+    }
+
     if (!username || !password) {
         return res.status(400).json({ error: '請填寫所有欄位' });
     }
@@ -633,10 +642,17 @@ app.post('/api/auth/register', async (req, res) => {
                 await createUser();
             }
 
+            // 在 db callback 裡執行，外層 try/catch 接不到這裡的例外；自行捕捉，避免 unhandled rejection 讓整個 process 結束
             async function createUser() {
-                // 加密密碼
-                const saltRounds = 10;
-                const hashedPassword = await bcrypt.hash(password, saltRounds);
+                let hashedPassword;
+                try {
+                    // 加密密碼
+                    const saltRounds = 10;
+                    hashedPassword = await bcrypt.hash(password, saltRounds);
+                } catch (hashErr) {
+                    console.error('密碼加密錯誤:', hashErr);
+                    return res.status(500).json({ error: '註冊失敗' });
+                }
 
                 // 建立新用戶
                 db.run(
@@ -667,6 +683,10 @@ app.post('/api/auth/register', async (req, res) => {
 // API 路由：用戶登入
 app.post('/api/auth/login', async (req, res) => {
     const { username, password, captcha, rememberMe } = req.body;
+
+    if (hasInvalidFieldTypes({ username, password })) {
+        return res.status(400).json({ error: '欄位格式不正確' });
+    }
 
     if (!username || !password) {
         return res.status(400).json({ error: '請輸入使用者名稱/Email 和密碼' });

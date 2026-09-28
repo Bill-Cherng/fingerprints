@@ -34,7 +34,9 @@ function createClient() {
                 'Content-Type': 'application/json',
                 ...(cookie ? { Cookie: cookie } : {})
             },
-            body: body ? JSON.stringify(body) : undefined
+            body: body ? JSON.stringify(body) : undefined,
+            // server 沒有回應時（例如 handler 內未捕捉的例外）讓測試失敗，而不是無限等待
+            signal: AbortSignal.timeout(10000)
         });
         const setCookie = response.headers.get('set-cookie');
         if (setCookie) {
@@ -264,4 +266,44 @@ test('logout destroys the session and clears the cookie', async () => {
 test('the removed /api/identify endpoint is no longer served', async () => {
     const response = await fetch(`${baseUrl}/api/identify?visitorId=anything`);
     assert.equal(response.status, 404);
+});
+
+test('non-string credentials are rejected instead of crashing the server', async () => {
+    const request = createClient();
+
+    const numericPassword = await request('POST', '/api/auth/register', {
+        username: 'numeric',
+        password: 12345678,
+        captcha: await solvedCaptcha(request)
+    });
+    assert.equal(numericPassword.status, 400);
+
+    const objectUsername = await request('POST', '/api/auth/register', {
+        username: { length: 5 },
+        password: 'secret123',
+        captcha: await solvedCaptcha(request)
+    });
+    assert.equal(objectUsername.status, 400);
+
+    const objectEmail = await request('POST', '/api/auth/register', {
+        username: 'objemail',
+        email: ['a@b.co'],
+        password: 'secret123',
+        captcha: await solvedCaptcha(request)
+    });
+    assert.equal(objectEmail.status, 400);
+
+    const loginNumericPassword = await request('POST', '/api/auth/login', {
+        username: 'numeric',
+        password: 12345678,
+        captcha: await solvedCaptcha(request)
+    });
+    assert.equal(loginNumericPassword.status, 400);
+
+    const stored = await queryAll("SELECT username FROM accounts WHERE username IN ('numeric', '[object Object]', 'objemail')");
+    assert.deepEqual(stored, []);
+
+    // server 仍正常運作
+    const stats = await request('GET', '/api/stats');
+    assert.equal(stats.status, 200);
 });
