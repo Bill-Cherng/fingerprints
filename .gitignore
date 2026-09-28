@@ -63,6 +63,7 @@ Thumbs.db
 # Test files
 test_cookies.txt
 cookies.txt
+test.txt
 test-fingerprint.js
 
 # Claude
