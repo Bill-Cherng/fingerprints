@@ -21,8 +21,7 @@
     "sqlite3": "^5.1.6"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
-    "puppeteer": "^24.17.0"
+    "nodemon": "^3.0.1"
   },
   "keywords": [
     "fingerprint",

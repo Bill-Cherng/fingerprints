@@ -56,7 +56,7 @@ npm test
 
 ### 3. 環境變數設定
 在 Render 的環境變數中設定：
-- `SESSION_SECRET`：session 簽章用的密鑰，正式環境務必設定（`render.yaml` 會自動產生）
+- `SESSION_SECRET`：session 簽章用的密鑰。**正式環境（`NODE_ENV=production`）未設定時伺服器會拒絕啟動**；`render.yaml` 會自動產生，若服務是在 Dashboard 手動建立，需自行在 Environment 頁面新增
 - `NODE_ENV`: `production`
 - `DB_PATH`（可選）：SQLite 資料庫檔案路徑，預設為專案目錄下的 `fingerprints.db`
 - `TRUST_PROXY`：前方代理伺服器的層數，Render 設為 `1`（`render.yaml` 已設定）。部署在代理後方卻沒設定時，所有使用者會被視為同一個 IP，共用限流額度；本機直連時不要設定

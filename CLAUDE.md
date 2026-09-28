@@ -108,7 +108,7 @@ session({
   resave: true,
   saveUninitialized: true,
   cookie: {
-    secure: false,  // 目前未強制 HTTPS only
+    secure: 'auto',  // HTTPS 請求才加上 Secure;在代理後方需設定 TRUST_PROXY
     httpOnly: true,
     maxAge: SESSION_MAX_AGE,  // 1 天
     sameSite: 'lax'
@@ -134,6 +134,7 @@ session({
 ### 錯誤處理
 
 - 資料庫查詢錯誤: 統一返回 500 狀態碼
+- 用戶端錯誤 (JSON 格式錯誤 400、內容超過 1MB 上限 413): 依錯誤本身的狀態碼返回,不回報成 500
 - CAPTCHA 驗證失敗: 返回 400 + 錯誤訊息
 - Session 過期: 重新載入 CAPTCHA
 
@@ -145,7 +146,7 @@ session({
 
 ## 部署注意事項
 
-- 環境變數: `PORT` (Render 自動設定), `SESSION_SECRET` (建議設定), `TRUST_PROXY` (代理層數,Render 為 1), `RATE_LIMIT_*` (限流上限)
+- 環境變數: `PORT` (Render 自動設定), `SESSION_SECRET` (正式環境必填,未設定時拒絕啟動), `TRUST_PROXY` (代理層數,Render 為 1), `RATE_LIMIT_*` (限流上限)
 - 資料庫: SQLite 檔案式資料庫,部署時需持久化儲存
 - 靜態檔案: 自動從 `public/` 目錄提供服務
 - 啟動命令: `npm start` (綁定 0.0.0.0)
