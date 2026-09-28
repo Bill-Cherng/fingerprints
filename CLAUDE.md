@@ -34,6 +34,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - 時間戳記: `created_at`, `last_seen`
 - **accounts 表**: 使用者帳號
   - 欄位: `username`, `password_hash`, `created_at`, `last_login`
+- **sessions 表**: express-session 的 session 資料
+  - 欄位: `sid`, `sess` (JSON), `expires` (毫秒時間戳)
 
 ## 核心邏輯與工作流程
 
@@ -54,7 +56,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **註冊** (`POST /api/auth/register`): bcryptjs 雜湊密碼,需通過數學驗證碼
 - **登入** (`POST /api/auth/login`): bcrypt 密碼驗證,需通過數學驗證碼,成功後以 `session.regenerate()` 換發新 session ID
-- **Session 管理**: express-session + cookie (24小時有效期)
+- **Session 管理**: express-session + cookie (24小時有效期),session 以 `SQLiteSessionStore` 存在同一個 SQLite 資料庫的 `sessions` 表,過期資料每 15 分鐘清除
 - **CAPTCHA**: 自製數學驗證碼 (加減乘運算),答案儲存在 session 中
 
 ### 3. 指紋比對與相似度演算法 (server.js)

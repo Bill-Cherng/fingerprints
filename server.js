@@ -73,26 +73,110 @@ function hasInvalidFieldTypes(fields) {
     return Object.values(fields).some(value => value !== undefined && value !== null && typeof value !== 'string');
 }
 
+// 資料庫初始化（DB_PATH 可指定其他路徑，測試時使用 :memory:）
+// 預設路徑以 server.js 所在目錄為準，不受啟動時的工作目錄影響
+const db = new sqlite3.Database(process.env.DB_PATH || path.join(__dirname, 'fingerprints.db'));
+
+const SESSION_MAX_AGE = 24 * 60 * 60 * 1000; // 1 天
+const SESSION_CLEANUP_INTERVAL = 15 * 60 * 1000; // 每 15 分鐘清除過期 session
+
+// 以 SQLite 儲存 session，取代預設的 MemoryStore：
+// 重新啟動或重新部署後使用者不會被登出，記憶體用量也不會隨 session 數量成長
+class SQLiteSessionStore extends session.Store {
+    constructor(database, { cleanupInterval = SESSION_CLEANUP_INTERVAL } = {}) {
+        super();
+        this.db = database;
+        // 其他查詢可能在建表完成前就進來，所有操作都先等待資料表建立
+        this.ready = new Promise((resolve, reject) => {
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS sessions (
+                    sid TEXT PRIMARY KEY,
+                    sess TEXT NOT NULL,
+                    expires INTEGER NOT NULL
+                )
+            `, (err) => (err ? reject(err) : resolve()));
+        });
+
+        if (cleanupInterval > 0) {
+            // unref：不讓清除計時器阻止 process 結束（例如測試跑完時）
+            this.cleanupTimer = setInterval(() => this.clearExpired(), cleanupInterval);
+            this.cleanupTimer.unref();
+        }
+    }
+
+    expiresAt(sess) {
+        const expires = sess?.cookie?.expires;
+        return expires ? new Date(expires).getTime() : Date.now() + SESSION_MAX_AGE;
+    }
+
+    run(sql, params, callback) {
+        this.ready.then(
+            () => this.db.run(sql, params, (err) => callback?.(err || null)),
+            (err) => callback?.(err)
+        );
+    }
+
+    get(sid, callback) {
+        this.ready.then(() => {
+            this.db.get(
+                'SELECT sess FROM sessions WHERE sid = ? AND expires > ?',
+                [sid, Date.now()],
+                (err, row) => {
+                    if (err) return callback(err);
+                    if (!row) return callback(null, null);
+                    let sess = null;
+                    try {
+                        sess = JSON.parse(row.sess);
+                    } catch (parseErr) {
+                        // 內容損毀的 session 視為不存在，讓使用者重新登入
+                    }
+                    callback(null, sess);
+                }
+            );
+        }, callback);
+    }
+
+    set(sid, sess, callback) {
+        this.run(
+            'INSERT OR REPLACE INTO sessions (sid, sess, expires) VALUES (?, ?, ?)',
+            [sid, JSON.stringify(sess), this.expiresAt(sess)],
+            callback
+        );
+    }
+
+    touch(sid, sess, callback) {
+        this.run('UPDATE sessions SET expires = ? WHERE sid = ?', [this.expiresAt(sess), sid], callback);
+    }
+
+    destroy(sid, callback) {
+        this.run('DELETE FROM sessions WHERE sid = ?', [sid], callback);
+    }
+
+    clearExpired(callback) {
+        this.run('DELETE FROM sessions WHERE expires <= ?', [Date.now()], callback);
+    }
+}
+
+const sessionStore = new SQLiteSessionStore(db);
+
 // 中間件
+// 靜態檔案不需要 session，放在 session 之前，避免每個 CSS/JS 請求都寫入 session 資料表
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(session({
+    store: sessionStore,
     secret: process.env.SESSION_SECRET || 'fingerprint-session-secret-key-2025',
     resave: true, // 在 Render 環境中啟用 resave
     saveUninitialized: true, // 在 Render 環境中啟用 saveUninitialized
     cookie: { 
         secure: false, // Render 環境中暫時禁用 secure
         httpOnly: true, // 防止 XSS 攻擊
-        maxAge: 24 * 60 * 60 * 1000, // 1 天，減少 session 存儲時間
+        maxAge: SESSION_MAX_AGE, // 1 天，減少 session 存儲時間
         sameSite: 'lax' // CSRF 保護
     },
     name: SESSION_COOKIE_NAME // 自定義 session 名稱
 }));
-app.use(express.static(path.join(__dirname, 'public')));
-
-// 資料庫初始化（DB_PATH 可指定其他路徑，測試時使用 :memory:）
-// 預設路徑以 server.js 所在目錄為準，不受啟動時的工作目錄影響
-const db = new sqlite3.Database(process.env.DB_PATH || path.join(__dirname, 'fingerprints.db'));
 
 // 多重指紋資料表
 // visitor_id 不設 UNIQUE：同一個瀏覽器可能被多個帳號使用，每個帳號各自保有一筆指紋紀錄
@@ -1157,6 +1241,7 @@ app.use((err, req, res, next) => {
 module.exports = {
     app,
     db,
+    SQLiteSessionStore,
     generateMathCaptcha,
     verifyMathCaptcha,
     calculateMultiFingerprintSimilarity,
