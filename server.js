@@ -67,6 +67,8 @@ function consumeCaptcha(req, userAnswer) {
     return { valid: true };
 }
 
+const SESSION_COOKIE_NAME = 'fingerprint.sid';
+
 // 中間件
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -80,7 +82,7 @@ app.use(session({
         maxAge: 24 * 60 * 60 * 1000, // 1 天，減少 session 存儲時間
         sameSite: 'lax' // CSRF 保護
     },
-    name: 'fingerprint.sid' // 自定義 session 名稱
+    name: SESSION_COOKIE_NAME // 自定義 session 名稱
 }));
 app.use(express.static('public'));
 
@@ -701,31 +703,45 @@ app.post('/api/auth/login', async (req, res) => {
                 return res.status(401).json({ error: '使用者名稱/Email 或密碼錯誤' });
             }
 
-            // 設定 session
-            req.session.userId = user.id;
-            req.session.username = user.username;
-
-            // 如果勾選「記住我」，延長 cookie 有效期到 30 天
-            if (rememberMe) {
-                req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 天
-                console.log('啟用「記住我」功能，session 有效期延長至 30 天');
-            } else {
-                req.session.cookie.maxAge = 24 * 60 * 60 * 1000; // 1 天（預設）
-            }
-
-            // 更新最後登入時間
-            db.run('UPDATE accounts SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
-
-            console.log('用戶登入成功:', { id: user.id, username: user.username, rememberMe: !!rememberMe });
-
-            res.json({
-                success: true,
-                message: '登入成功！',
-                user: {
-                    id: user.id,
-                    username: user.username,
-                    email: user.email
+            // 登入成功後換發新的 session ID，避免 session fixation：攻擊者預先植入的 session ID 不會變成已登入狀態
+            req.session.regenerate((regenerateErr) => {
+                if (regenerateErr) {
+                    console.error('Session 重新產生錯誤:', regenerateErr);
+                    return res.status(500).json({ error: '登入失敗' });
                 }
+
+                req.session.userId = user.id;
+                req.session.username = user.username;
+
+                // 如果勾選「記住我」，延長 cookie 有效期到 30 天
+                if (rememberMe) {
+                    req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 天
+                    console.log('啟用「記住我」功能，session 有效期延長至 30 天');
+                } else {
+                    req.session.cookie.maxAge = 24 * 60 * 60 * 1000; // 1 天（預設）
+                }
+
+                req.session.save((saveErr) => {
+                    if (saveErr) {
+                        console.error('Session 保存錯誤:', saveErr);
+                        return res.status(500).json({ error: '登入失敗' });
+                    }
+
+                    // 更新最後登入時間
+                    db.run('UPDATE accounts SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+
+                    console.log('用戶登入成功:', { id: user.id, username: user.username, rememberMe: !!rememberMe });
+
+                    res.json({
+                        success: true,
+                        message: '登入成功！',
+                        user: {
+                            id: user.id,
+                            username: user.username,
+                            email: user.email
+                        }
+                    });
+                });
             });
         } catch (error) {
             console.error('密碼驗證錯誤:', error);
@@ -742,6 +758,7 @@ app.post('/api/auth/logout', (req, res) => {
             return res.status(500).json({ error: '登出失敗' });
         }
         
+        res.clearCookie(SESSION_COOKIE_NAME);
         res.json({ success: true, message: '登出成功！' });
     });
 });
@@ -1043,10 +1060,11 @@ function handleGuestUserFingerprint(req, res, newData) {
     );
 }
 
-// API 路由：獲取所有指紋記錄
-app.get('/api/fingerprints', (req, res) => {
+// API 路由：獲取目前登入用戶的指紋記錄（不開放查詢其他人的紀錄）
+app.get('/api/fingerprints', isAuthenticated, (req, res) => {
     db.all(
-        'SELECT f.id, f.visitor_id, f.confidence_score, f.version, f.created_at, f.last_seen, f.linked_user_id, a.username FROM fingerprints f LEFT JOIN accounts a ON f.linked_user_id = a.id ORDER BY f.last_seen DESC',
+        'SELECT f.id, f.visitor_id, f.confidence_score, f.version, f.created_at, f.last_seen, f.linked_user_id, a.username FROM fingerprints f LEFT JOIN accounts a ON f.linked_user_id = a.id WHERE f.linked_user_id = ? ORDER BY f.last_seen DESC',
+        [req.session.userId],
         (err, rows) => {
             if (err) {
                 console.error('查詢錯誤:', err);
@@ -1058,13 +1076,14 @@ app.get('/api/fingerprints', (req, res) => {
     );
 });
 
-// API 路由：獲取指紋詳細資料（用於調試）
-app.get('/api/debug/fingerprint/:id', (req, res) => {
+// API 路由：獲取指紋詳細資料（用於調試，只能查看自己帳號的指紋）
+app.get('/api/debug/fingerprint/:id', isAuthenticated, (req, res) => {
     const fingerprintId = req.params.id;
     
+    // 不屬於自己的紀錄一律回 404，不透露該 ID 是否存在
     db.get(
-        'SELECT f.*, a.username FROM fingerprints f LEFT JOIN accounts a ON f.linked_user_id = a.id WHERE f.id = ?',
-        [fingerprintId],
+        'SELECT f.*, a.username FROM fingerprints f LEFT JOIN accounts a ON f.linked_user_id = a.id WHERE f.id = ? AND f.linked_user_id = ?',
+        [fingerprintId, req.session.userId],
         (err, row) => {
             if (err) {
                 console.error('查詢錯誤:', err);

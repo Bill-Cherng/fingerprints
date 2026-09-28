@@ -27,7 +27,7 @@ after(() => new Promise((resolve) => {
 function createClient() {
     let cookie = null;
 
-    return async function request(method, path, body) {
+    async function request(method, path, body) {
         const response = await fetch(baseUrl + path, {
             method,
             headers: {
@@ -41,7 +41,11 @@ function createClient() {
             cookie = setCookie.split(';')[0];
         }
         return { status: response.status, body: await response.json() };
-    };
+    }
+
+    request.cookie = () => cookie;
+    request.setCookie = (value) => { cookie = value; };
+    return request;
 }
 
 function solveCaptcha(question) {
@@ -174,4 +178,85 @@ test('migrateFingerprintsTable removes the UNIQUE constraint and keeps existing 
     assert.equal(rows[0].canvas_fingerprint, null);
 
     await new Promise((resolve) => legacy.close(resolve));
+});
+
+function queryAll(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
+    });
+}
+
+test('login issues a new session ID so a pre-planted session cannot be hijacked', async () => {
+    const victim = createClient();
+    const register = await victim('POST', '/api/auth/register', {
+        username: 'dave',
+        password: 'secret123',
+        captcha: await solvedCaptcha(victim)
+    });
+    assert.equal(register.status, 200);
+
+    // 攻擊者事先取得並植入的 session ID
+    const captcha = await solvedCaptcha(victim);
+    const plantedCookie = victim.cookie();
+
+    const login = await victim('POST', '/api/auth/login', { username: 'dave', password: 'secret123', captcha });
+    assert.equal(login.status, 200);
+    assert.notEqual(victim.cookie(), plantedCookie, 'session ID must change after login');
+
+    const attacker = createClient();
+    attacker.setCookie(plantedCookie);
+    const me = await attacker('GET', '/api/auth/me');
+    assert.equal(me.body.loggedIn, false);
+
+    const victimMe = await victim('GET', '/api/auth/me');
+    assert.equal(victimMe.body.loggedIn, true);
+});
+
+test('fingerprint listing requires login and only returns the caller\'s own records', async () => {
+    const guest = createClient();
+    const anonymous = await guest('GET', '/api/fingerprints');
+    assert.equal(anonymous.status, 401);
+
+    const erin = createClient();
+    await registerAndLogin(erin, 'erin');
+    await erin('POST', '/api/fingerprint', buildPayload({ visitorId: 'erin-browser' }));
+
+    const own = await erin('GET', '/api/fingerprints');
+    assert.equal(own.status, 200);
+    assert.ok(own.body.length > 0);
+    assert.ok(own.body.every(row => row.username === 'erin'));
+});
+
+test('debug endpoint requires login and hides other users\' fingerprints', async () => {
+    const frank = createClient();
+    const grace = createClient();
+    await registerAndLogin(frank, 'frank');
+    await registerAndLogin(grace, 'grace');
+    await frank('POST', '/api/fingerprint', buildPayload({ visitorId: 'frank-browser' }));
+
+    const [frankRow] = await queryAll(
+        "SELECT f.id FROM fingerprints f JOIN accounts a ON f.linked_user_id = a.id WHERE a.username = 'frank'"
+    );
+
+    const anonymous = await createClient()('GET', `/api/debug/fingerprint/${frankRow.id}`);
+    assert.equal(anonymous.status, 401);
+
+    const other = await grace('GET', `/api/debug/fingerprint/${frankRow.id}`);
+    assert.equal(other.status, 404);
+
+    const own = await frank('GET', `/api/debug/fingerprint/${frankRow.id}`);
+    assert.equal(own.status, 200);
+    assert.equal(own.body.username, 'frank');
+});
+
+test('logout destroys the session and clears the cookie', async () => {
+    const henry = createClient();
+    await registerAndLogin(henry, 'henry');
+
+    const response = await fetch(`${baseUrl}/api/auth/logout`, { method: 'POST', headers: { Cookie: henry.cookie() } });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('set-cookie') || '', /fingerprint\.sid=;/);
+
+    const me = await henry('GET', '/api/auth/me');
+    assert.equal(me.body.loggedIn, false);
 });
