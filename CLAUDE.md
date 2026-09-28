@@ -105,8 +105,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```javascript
 session({
   store: sessionStore,  // SQLiteSessionStore,存在同一個 SQLite 資料庫的 sessions 表
-  resave: true,
-  saveUninitialized: true,
+  resave: false,  // 未變動的 session 只由 store.touch 更新到期時間
+  saveUninitialized: false,  // 寫入過資料的 session 才存檔,不帶 cookie 的請求 (健康檢查等) 不會新增 session
   cookie: {
     secure: 'auto',  // HTTPS 請求才加上 Secure;在代理後方需設定 TRUST_PROXY
     httpOnly: true,

@@ -7,7 +7,6 @@ class MultiFingerprintApp {
         this.clientId = null;
         this.fingerprintData = {};
         this.bindEvents();
-        this.setupRealTimeUpdates();
         this.checkAuthStatus();
         this.init();
     }
@@ -1257,19 +1256,6 @@ class MultiFingerprintApp {
             button.disabled = false;
             button.textContent = '開始採集指紋';
         }
-    }
-
-    // 設定即時更新
-    setupRealTimeUpdates() {
-        const updateViewportSize = () => {
-            const viewportInfo = document.getElementById('viewportInfo');
-            if (viewportInfo) {
-                viewportInfo.textContent = `${window.innerWidth} × ${window.innerHeight}`;
-            }
-        };
-
-        window.addEventListener('resize', updateViewportSize);
-        updateViewportSize();
     }
 
     // 檢查認證狀態
