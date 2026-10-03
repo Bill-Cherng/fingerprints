@@ -279,3 +279,91 @@ test('the theme follows the system setting until the user toggles it', async () 
         await context.close();
     }
 });
+
+test('on a phone the open dialog sits above the floating theme button', async () => {
+    const { context, page } = await openPage({ viewport: { width: 375, height: 740 } });
+    try {
+        await page.goto(baseUrl);
+        await page.click('#toggleAuthBtn');
+        // 錯誤訊息會把按鈕往下推，到主題按鈕的位置
+        await page.click('#loginBtn');
+        await page.waitForSelector('#formErrorMessage', { state: 'visible' });
+
+        const toggle = await page.locator('#themeToggle').boundingBox();
+        const topElementIsToggle = await page.evaluate(
+            ([x, y]) => Boolean(document.elementFromPoint(x, y)?.closest('#themeToggle')),
+            [toggle.x + toggle.width / 2, toggle.y + toggle.height / 2]
+        );
+        assert.equal(topElementIsToggle, false);
+
+        // 點「註冊新帳號」的右邊緣：切換到註冊表單，而不是切換主題
+        const themeBefore = await page.getAttribute('html', 'data-theme');
+        const button = await page.locator('#showRegisterBtn').boundingBox();
+        await page.mouse.click(button.x + button.width - 10, button.y + button.height / 2);
+        assert.equal(await page.isVisible('#registerForm'), true);
+        assert.equal(await page.getAttribute('html', 'data-theme'), themeBefore);
+    } finally {
+        await context.close();
+    }
+});
+
+test('confidence shows only the percentage, without the FingerprintJS upsell text', async () => {
+    const { context, page, fingerprintResponses } = await openPage();
+    try {
+        await page.goto(baseUrl);
+        await waitForReady(page);
+        await collect(page, fingerprintResponses);
+
+        const confidence = await page.textContent('#confidence');
+        assert.match(confidence, /^\d+(\.\d)?%$/);
+        assert.doesNotMatch(await page.textContent('#componentsList'), /upgrade|fpjs\.dev/i);
+    } finally {
+        await context.close();
+    }
+});
+
+test('buttons keep the site styles in both themes', async () => {
+    for (const colorScheme of ['light', 'dark']) {
+        const { context, page } = await openPage({ colorScheme });
+        try {
+            await page.goto(baseUrl);
+            await page.click('#toggleAuthBtn');
+            const background = (selector) => page.$eval(selector, (el) => getComputedStyle(el).backgroundColor);
+            // 「重新生成」套用次要按鈕樣式，不是瀏覽器預設的白底按鈕
+            assert.equal(await background('#refreshLoginCaptcha'), await background('#showRegisterBtn'), colorScheme);
+            await page.click('#closeModal');
+
+            // 淺色模式的頁面背景是紫色漸層，主要按鈕改用白底才看得清楚
+            if (colorScheme === 'light') {
+                assert.equal(await background('#collectBtn'), 'rgb(255, 255, 255)');
+            }
+        } finally {
+            await context.close();
+        }
+    }
+});
+
+test('long values such as the client ID wrap instead of being cut off on a phone', async () => {
+    const { context, page, fingerprintResponses } = await openPage({ viewport: { width: 375, height: 740 } });
+    try {
+        // Client ID 的長度會隨機變化；直接放一個長的，讓結果穩定
+        await page.addInitScript(() => {
+            localStorage.setItem('fingerprint_client_id', `1791025272611_${'x'.repeat(40)}_Mozilla/5.`);
+        });
+        await page.goto(baseUrl);
+        await waitForReady(page);
+        await collect(page, fingerprintResponses);
+
+        const overflow = await page.evaluate(() => {
+            const list = document.getElementById('componentsList');
+            const right = list.getBoundingClientRect().right;
+            return {
+                scrollsSideways: list.scrollWidth > list.clientWidth,
+                sticksOut: [...list.querySelectorAll('.fingerprintjs-section')].filter((el) => el.getBoundingClientRect().right > right + 1).length
+            };
+        });
+        assert.deepEqual(overflow, { scrollsSideways: false, sticksOut: 0 });
+    } finally {
+        await context.close();
+    }
+});
