@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **啟動開發伺服器**: `npm run dev` (使用 nodemon 自動重啟)
 - **啟動生產伺服器**: `npm start`
 - **執行測試**: `npm test` (使用 Node.js 內建測試執行器)
+- **程式碼檢查**: `npm run lint` (ESLint,CI 會執行)
 - **執行瀏覽器測試**: `npm run test:e2e` (Playwright + Chromium,首次需執行 `npx playwright install chromium`)
 
 ## 專案架構
@@ -24,6 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `index.html` - 單頁應用介面
   - `app.js` (1400+ 行) - 前端核心邏輯
   - `style.css` - 響應式樣式
+  - `fp-loader.js` - FingerprintJS 載入管理器 (獨立成檔案,CSP 不需允許內嵌 script)
   - `lib/` - 第三方函式庫 (FingerprintJS 只從這裡載入,不使用外部 CDN)
 - **資料庫**: `fingerprints.db` (SQLite3,開發時自動建立)
 
@@ -42,7 +44,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 1. 指紋採集 (前端 app.js)
 
-- 使用 FingerprintJS V4 開源版 (`@fingerprintjs/fingerprintjs@4.6.2`) 採集基礎指紋
+- 使用 FingerprintJS V4 開源版 (`public/lib/fingerprintjs.min.js`,v4.6.2) 採集基礎指紋
 - 額外採集 7 種自訂指紋:
   - Canvas 指紋 (繪圖渲染特徵)
   - WebGL 指紋 (GPU/驅動程式特徵)
@@ -122,6 +124,7 @@ session({
 
 - `express.static` 放在 session 之前,靜態檔案請求不會讀寫 sessions 表
 - 所有回應都帶 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: strict-origin-when-cross-origin`,並關閉 `X-Powered-By`
+- Content Security Policy (`CONTENT_SECURITY_POLICY`): `script-src 'self'`,不允許內嵌 script;style 允許 `'unsafe-inline'` (頁面有 style 屬性),img 允許 `data:` (Canvas 預覽)。新增前端程式時不要寫內嵌 `<script>` 或 `onclick` 等屬性
 
 ### 指紋相似度閾值
 

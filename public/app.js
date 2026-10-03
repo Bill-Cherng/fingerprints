@@ -1063,7 +1063,7 @@ class MultiFingerprintApp {
             }
         });
         
-        // ESC 鍵關閉彈出視窗
+        // ESC 鍵關閉彈出視窗；Tab 只在開啟中的視窗內循環
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 if (authModal.classList.contains('show')) {
@@ -1072,22 +1072,68 @@ class MultiFingerprintApp {
                 if (privacyModal.classList.contains('show')) {
                     this.closePrivacyModal();
                 }
+            } else if (e.key === 'Tab') {
+                const openModal = [authModal, privacyModal].find((modal) => modal.classList.contains('show'));
+                if (openModal) {
+                    this.trapFocus(openModal, e);
+                }
             }
         });
     }
 
+    // 視窗內目前看得到、可以操作的元素
+    getFocusableElements(modal) {
+        return [...modal.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])')]
+            .filter((element) => !element.disabled && element.offsetParent !== null);
+    }
+
+    // 讓 Tab / Shift+Tab 停在視窗內，不會跑到背後的頁面
+    trapFocus(modal, event) {
+        const focusable = this.getFocusableElements(modal);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+
+        if (!modal.contains(active)) {
+            event.preventDefault();
+            first.focus();
+        } else if (event.shiftKey && active === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && active === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    }
+
+    // 開啟視窗時記住原本的焦點並把焦點移進視窗；關閉時再還回去，鍵盤與螢幕閱讀器使用者才不會迷路
+    openDialog(modal, initialFocus) {
+        this.focusBeforeDialog = document.activeElement;
+        modal.classList.add('show');
+        document.body.style.overflow = 'hidden';
+        (initialFocus || this.getFocusableElements(modal)[0])?.focus();
+    }
+
+    closeDialog(modal) {
+        modal.classList.remove('show');
+        document.body.style.overflow = '';
+        const previous = this.focusBeforeDialog;
+        this.focusBeforeDialog = null;
+        // 原本的按鈕若已隱藏（例如登入後的「用戶登入/註冊」）就不還焦點
+        if (previous && document.contains(previous) && previous.offsetParent !== null) {
+            previous.focus();
+        }
+    }
+
     // 顯示隱私同意視窗
     showPrivacyModal() {
-        const privacyModal = document.getElementById('privacyModal');
-        privacyModal.classList.add('show');
-        document.body.style.overflow = 'hidden';
+        this.openDialog(document.getElementById('privacyModal'), document.getElementById('agreeBtn'));
     }
 
     // 關閉隱私同意視窗
     closePrivacyModal() {
-        const privacyModal = document.getElementById('privacyModal');
-        privacyModal.classList.remove('show');
-        document.body.style.overflow = '';
+        this.closeDialog(document.getElementById('privacyModal'));
     }
 
     // 同意隱私聲明
@@ -1111,8 +1157,7 @@ class MultiFingerprintApp {
         this.showLoginForm();
         modalTitle.textContent = '用戶登入';
         
-        authModal.classList.add('show');
-        document.body.style.overflow = 'hidden';
+        this.openDialog(authModal, document.getElementById('loginUsername'));
     }
 
     // 載入數學 CAPTCHA
@@ -1166,9 +1211,7 @@ class MultiFingerprintApp {
 
     // 關閉認證彈出視窗
     closeAuthModal() {
-        const authModal = document.getElementById('authModal');
-        authModal.classList.remove('show');
-        document.body.style.overflow = '';
+        this.closeDialog(document.getElementById('authModal'));
 
         // 清空表單
         document.getElementById('loginUsername').value = '';
@@ -1195,6 +1238,11 @@ class MultiFingerprintApp {
         document.getElementById('registerForm').style.display = 'none';
         modalTitle.textContent = '用戶登入';
         
+        // 在視窗內切換表單時，焦點移到新表單的第一個欄位
+        if (document.getElementById('authModal').classList.contains('show')) {
+            document.getElementById('loginUsername').focus();
+        }
+
         // 載入登入 CAPTCHA
         this.loadCaptcha('login');
     }
@@ -1206,6 +1254,10 @@ class MultiFingerprintApp {
         document.getElementById('registerForm').style.display = 'block';
         modalTitle.textContent = '用戶註冊';
         
+        if (document.getElementById('authModal').classList.contains('show')) {
+            document.getElementById('registerUsername').focus();
+        }
+
         // 載入註冊 CAPTCHA
         this.loadCaptcha('register');
     }
@@ -1461,6 +1513,8 @@ class MultiFingerprintApp {
                     this.showAuthModal();
                     // 預填用戶名
                     document.getElementById('loginUsername').value = username;
+                    // 使用者名稱已填好，焦點直接放在密碼欄
+                    document.getElementById('loginPassword').focus();
                     this.authRequestPending = false;
                 }, 1500);
             } else {
@@ -1615,7 +1669,7 @@ class ThemeManager {
 }
 
 // 初始化主題管理器（立即執行）
-const themeManager = new ThemeManager();
+new ThemeManager();
 
 // 初始化應用程式
 document.addEventListener('DOMContentLoaded', () => {
