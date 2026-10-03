@@ -49,7 +49,7 @@ npm test
 4. 連接你的 GitHub 帳號並選擇此專案
 5. 設定部署選項：
    - **Name**: `fingerprint-test-site` (或你喜歡的名稱)
-   - **Environment**: `Node`
+   - **Environment**: `Node`（版本由專案根目錄的 `.node-version` 指定為 22；本專案需要 Node 22 以上）
    - **Build Command**: `npm install`
    - **Start Command**: `npm start`
    - **Plan**: 選擇免費方案
@@ -63,6 +63,7 @@ npm test
 - `RATE_LIMIT_API_PER_MINUTE`（可選）：每個 IP 每分鐘可呼叫 API 的次數，預設 100（`GET /api/stats` 不計）
 - `RATE_LIMIT_FINGERPRINT_PER_MINUTE`（可選）：每個 IP 每分鐘可提交指紋的次數，預設 10
 - `RATE_LIMIT_AUTH_PER_15_MIN`（可選）：每個 IP 每 15 分鐘可登入加註冊的次數，預設 20
+- `LOG_LEVEL`（可選）：設為 `debug` 時輸出逐筆的相似度計算與指紋內容；預設不輸出，避免拖慢回應並在 log 留下使用者資料
 
 ### 資料保存注意事項
 帳號、指紋與 session 都存在同一個 SQLite 檔案中。Render 免費方案的磁碟是暫存的，**每次重新部署都會清空資料庫**。若需要保留資料，請掛載 persistent disk 並將 `DB_PATH` 指向該磁碟，或改用外部資料庫。
@@ -95,7 +96,7 @@ fingerprints/
 - `GET /` - 主頁面
 - `POST /api/fingerprint` - 提交指紋資料（未登入時只比對不儲存，登入後與帳號綁定儲存）
 - `GET /api/fingerprints` - 列出目前登入用戶自己的指紋紀錄（需登入）
-- `GET /api/debug/fingerprint/:id` - 查看自己的指紋詳細資料（需登入）
+- `GET /api/debug/fingerprint/:id` - 查看自己的指紋詳細資料（需登入；超過 1KB 的 FingerprintJS 元件值以 `sha256:` 雜湊呈現）
 - `GET /api/stats` - 取得統計資料
 - `GET /api/captcha` - 取得數學驗證碼
 - `POST /api/auth/register` - 用戶註冊

@@ -377,3 +377,27 @@ test('"remember me" keeps the session for 30 days and later requests stay logged
     assert.equal(me.body.loggedIn, true);
     assert.equal(me.body.user.username, 'remember');
 });
+
+test('responses carry basic security headers and do not reveal the framework', async () => {
+    for (const path of ['/', '/app.js', '/api/stats']) {
+        const response = await fetch(baseUrl + path);
+        assert.equal(response.headers.get('x-powered-by'), null, path);
+        assert.equal(response.headers.get('x-content-type-options'), 'nosniff', path);
+        assert.equal(response.headers.get('x-frame-options'), 'DENY', path);
+        assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin', path);
+    }
+});
+
+test('a guest comparison writes no per-record logs unless LOG_LEVEL=debug', async () => {
+    const logged = [];
+    const original = console.log;
+    console.log = (...args) => logged.push(args);
+    try {
+        const guest = createClient();
+        const result = await guest('POST', '/api/fingerprint', buildPayload({ visitorId: 'quiet-guest' }));
+        assert.equal(result.status, 200);
+    } finally {
+        console.log = original;
+    }
+    assert.deepEqual(logged, []);
+});
