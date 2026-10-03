@@ -223,3 +223,64 @@ test('registration rejects overly long emails and passwords bcrypt would truncat
         assert.match(result.body.error, /密碼過長/);
     }
 });
+
+test('simultaneous first submissions from one account keep a single fingerprint record', async () => {
+    const request = createClient();
+    await register(request, { username: 'concurrent' });
+    await login(request, 'concurrent');
+
+    const payload = {
+        visitorId: 'concurrent-browser',
+        components: { platform: { value: 'Win32' } },
+        hardware: { cores: 4, memory: 8, touchPoints: 0 }
+    };
+    const results = await Promise.all([1, 2, 3].map(() => request('POST', '/api/fingerprint', payload)));
+    assert.deepEqual(results.map((result) => result.status), [200, 200, 200]);
+
+    const rows = await queryAll(
+        "SELECT f.id FROM fingerprints f JOIN accounts a ON a.id = f.linked_user_id WHERE a.username = 'concurrent'"
+    );
+    assert.equal(rows.length, 1);
+    // 每個回應指向同一筆紀錄
+    assert.deepEqual([...new Set(results.map((result) => result.body.userId))], [rows[0].id]);
+
+    // 訪客比對時，同一個人只出現一次
+    const guest = createClient();
+    const guestResult = await guest('POST', '/api/fingerprint', payload);
+    const names = guestResult.body.topMatches.map((match) => match.username);
+    assert.equal(names.filter((name) => name === 'concurrent').length, 1);
+});
+
+test('migrateFingerprintsTable removes duplicate records per account, keeping the most recent one', async () => {
+    const sqlite3 = require('sqlite3');
+    const { migrateFingerprintsTable } = require('../server');
+    const legacy = new sqlite3.Database(':memory:');
+    const exec = (sql) => new Promise((resolve, reject) => legacy.exec(sql, (err) => (err ? reject(err) : resolve())));
+    const all = (sql) => new Promise((resolve, reject) => legacy.all(sql, (err, rows) => (err ? reject(err) : resolve(rows))));
+
+    await exec(`
+        CREATE TABLE fingerprints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            visitor_id TEXT,
+            components TEXT,
+            last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+            linked_user_id INTEGER
+        );
+        INSERT INTO fingerprints (visitor_id, last_seen, linked_user_id) VALUES ('old', '2026-01-01 00:00:00', 7);
+        INSERT INTO fingerprints (visitor_id, last_seen, linked_user_id) VALUES ('newest', '2026-03-01 00:00:00', 7);
+        INSERT INTO fingerprints (visitor_id, last_seen, linked_user_id) VALUES ('middle', '2026-02-01 00:00:00', 7);
+        INSERT INTO fingerprints (visitor_id, last_seen, linked_user_id) VALUES ('other-user', '2026-01-01 00:00:00', 8);
+        INSERT INTO fingerprints (visitor_id, last_seen, linked_user_id) VALUES ('guest-a', '2026-01-01 00:00:00', NULL);
+        INSERT INTO fingerprints (visitor_id, last_seen, linked_user_id) VALUES ('guest-b', '2026-01-01 00:00:00', NULL);
+    `);
+
+    await new Promise((resolve, reject) => migrateFingerprintsTable(legacy, (err) => (err ? reject(err) : resolve())));
+
+    const rows = await all('SELECT visitor_id FROM fingerprints ORDER BY id');
+    assert.deepEqual(rows.map((row) => row.visitor_id), ['newest', 'other-user', 'guest-a', 'guest-b']);
+
+    // 之後不能再為同一帳號新增第二筆
+    await assert.rejects(exec("INSERT INTO fingerprints (visitor_id, linked_user_id) VALUES ('again', 7)"), /UNIQUE/);
+
+    await new Promise((resolve) => legacy.close(resolve));
+});

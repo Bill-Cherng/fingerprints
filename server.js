@@ -335,10 +335,33 @@ const FINGERPRINTS_COLUMNS = [
 // 舊版資料表的 visitor_id 為 UNIQUE，同一瀏覽器登入第二個帳號時會寫入失敗；偵測到舊結構時重建資料表並保留資料
 function migrateFingerprintsTable(database, callback = () => {}) {
     const createIndexes = () => {
-        database.exec(`
-            CREATE INDEX IF NOT EXISTS idx_fingerprints_visitor_id ON fingerprints(visitor_id);
-            CREATE INDEX IF NOT EXISTS idx_fingerprints_linked_user_id ON fingerprints(linked_user_id);
-        `, callback);
+        // 每個帳號只保留一筆指紋：先刪掉同一帳號較舊的重複紀錄（同時提交造成的），再建立唯一索引
+        database.run(`
+            DELETE FROM fingerprints
+            WHERE linked_user_id IS NOT NULL AND id NOT IN (
+                SELECT id FROM (
+                    SELECT id, ROW_NUMBER() OVER (PARTITION BY linked_user_id ORDER BY last_seen DESC, id DESC) AS rank
+                    FROM fingerprints
+                    WHERE linked_user_id IS NOT NULL
+                )
+                WHERE rank = 1
+            )
+        `, function(dedupeErr) {
+            if (dedupeErr) {
+                console.error('清除重複指紋紀錄失敗:', dedupeErr);
+                return callback(dedupeErr);
+            }
+            if (this.changes > 0) {
+                console.log(`已清除 ${this.changes} 筆同一帳號的重複指紋紀錄`);
+            }
+
+            database.exec(`
+                CREATE INDEX IF NOT EXISTS idx_fingerprints_visitor_id ON fingerprints(visitor_id);
+                CREATE INDEX IF NOT EXISTS idx_fingerprints_linked_user_id ON fingerprints(linked_user_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_fingerprints_one_per_user
+                    ON fingerprints(linked_user_id) WHERE linked_user_id IS NOT NULL;
+            `, callback);
+        });
     };
 
     database.get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'fingerprints'", (err, row) => {
@@ -1258,11 +1281,17 @@ function handleLoggedInUserFingerprint(req, res, newData) {
                 );
             } else {
                 // 新增指紋記錄
+                // 同一帳號同時送出多個請求時，前面的查詢都會是「沒有紀錄」；
+                // 由唯一索引 idx_fingerprints_one_per_user 擋下重複，改為更新同一筆，不會產生第二筆紀錄
                 const placeholders = FINGERPRINT_WRITE_COLUMNS.map(() => '?').join(', ');
-                db.run(
-                    `INSERT INTO fingerprints (${FINGERPRINT_WRITE_COLUMNS.join(', ')}, linked_user_id) VALUES (${placeholders}, ?)`,
+                const updateClause = FINGERPRINT_WRITE_COLUMNS.map(column => `${column} = excluded.${column}`).join(', ');
+                db.get(
+                    `INSERT INTO fingerprints (${FINGERPRINT_WRITE_COLUMNS.join(', ')}, linked_user_id) VALUES (${placeholders}, ?)
+                     ON CONFLICT(linked_user_id) WHERE linked_user_id IS NOT NULL
+                     DO UPDATE SET ${updateClause}, last_seen = CURRENT_TIMESTAMP
+                     RETURNING id`,
                     [...fingerprintWriteValues(newData), userId],
-                    function(insertErr) {
+                    (insertErr, inserted) => {
                         if (insertErr) {
                             console.error('新增用戶指紋錯誤:', insertErr);
                             return res.status(500).json({ error: '新增失敗' });
@@ -1274,7 +1303,7 @@ function handleLoggedInUserFingerprint(req, res, newData) {
                         db.get('SELECT username FROM accounts WHERE id = ?', [userId], (userErr, user) => {
                             res.json({
                                 isNewUser: true,
-                                userId: this.lastID,
+                                userId: inserted.id,
                                 message: `已登入用戶 ${user?.username || userId} 的指紋已存儲`,
                                 isLoggedIn: true
                             });
@@ -1301,8 +1330,8 @@ function handleGuestUserFingerprint(req, res, newData) {
                 return res.status(500).json({ error: '資料庫查詢失敗' });
             }
 
-            // 計算與所有用戶的多重指紋相似度並排序
-            const similarityResults = [];
+            // 計算與所有用戶的多重指紋相似度並排序；同一帳號只保留相似度最高的一筆，避免同一人在結果中出現多次
+            const bestByAccount = new Map();
             
             for (const user of allUsers) {
                 const similarity = calculateMultiFingerprintSimilarity(rowToFingerprintData(user), newData);
@@ -1310,14 +1339,19 @@ function handleGuestUserFingerprint(req, res, newData) {
                 debugLog(`與指紋 ID ${user.id} (用戶: ${user.username || '未登入'}) 多重指紋相似度: ${similarity.toFixed(1)}%`);
                 
                 if (similarity > 0) { // 只記錄有相似度的結果
-                    similarityResults.push({
-                        id: user.linked_user_id || user.id,
-                        username: user.username || `ID-${user.linked_user_id || user.id}`,
-                        fingerprintId: user.id,
-                        similarity: similarity
-                    });
+                    const accountKey = user.linked_user_id ? `user-${user.linked_user_id}` : `fingerprint-${user.id}`;
+                    const best = bestByAccount.get(accountKey);
+                    if (!best || similarity > best.similarity) {
+                        bestByAccount.set(accountKey, {
+                            id: user.linked_user_id || user.id,
+                            username: user.username || `ID-${user.linked_user_id || user.id}`,
+                            fingerprintId: user.id,
+                            similarity: similarity
+                        });
+                    }
                 }
             }
+            const similarityResults = [...bestByAccount.values()];
 
             // 只保留相似度 20% 以上的結果，按相似度降序排序，取前5個
             const top5Matches = similarityResults

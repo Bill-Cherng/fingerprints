@@ -84,8 +84,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - 自動忽略 session 相關元件 (localStorage, sessionStorage)
 
 - **登入 vs 未登入使用者**:
-  - **已登入**: 指紋直接關聯到使用者帳號 (`linked_user_id`),更新時計算相似度
-  - **未登入**: 與資料庫所有指紋比對,只保留相似度 ≥ 20% 的結果,返回其中前 5 個最相似用戶 (`GUEST_MATCH_THRESHOLD`)
+  - **已登入**: 指紋直接關聯到使用者帳號 (`linked_user_id`),更新時計算相似度;每個帳號只有一筆指紋 (唯一索引 `idx_fingerprints_one_per_user`,新增時以 `ON CONFLICT` 改為更新,同時送出的請求不會產生第二筆;啟動時會清除既有的重複紀錄,保留 `last_seen` 最新的一筆)
+  - **未登入**: 與資料庫所有指紋比對,同一帳號只取相似度最高的一筆,只保留相似度 ≥ 20% 的結果,返回其中前 5 個最相似用戶 (`GUEST_MATCH_THRESHOLD`)
 
 ### 4. API 端點總覽
 
