@@ -217,6 +217,17 @@ header {
     transform: translateY(-2px);
 }
 
+/* 淺色模式的頁面背景與主要按鈕都是紫色漸層，改用白底紫字，主要按鈕才會比次要按鈕醒目 */
+[data-theme="light"] .controls .btn-primary {
+    background: #ffffff;
+    color: #5a4bcf;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="light"] .controls .btn-primary:hover:not(:disabled) {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+}
+
 .btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
@@ -315,9 +326,16 @@ header {
 
 .components-grid {
     display: grid;
+    /* minmax(0, 1fr)：欄寬不被最長的內容撐開；否則 Client ID 等長字串會讓區塊超出容器，在手機上被裁掉 */
+    grid-template-columns: minmax(0, 1fr);
     gap: 15px;
     max-height: 400px;
     overflow-y: auto;
+}
+
+/* 訪客 ID、Client ID 等沒有空白的長字串允許在任意位置換行 */
+.components-grid .highlight {
+    overflow-wrap: anywhere;
 }
 
 .component-item {
@@ -635,7 +653,7 @@ header {
 .modal {
     display: none;
     position: fixed;
-    z-index: 1000;
+    z-index: 1100; /* 高於右下角的主題切換按鈕（1000），手機上才不會蓋住視窗裡的按鈕 */
     left: 0;
     top: 0;
     width: 100%;

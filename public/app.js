@@ -922,12 +922,12 @@ class MultiFingerprintApp {
         resultContainer.innerHTML += similarityHtml;
     }
 
-    // FingerprintJS 的 confidence 是 { score, comment } 物件，轉成百分比文字顯示
+    // FingerprintJS 的 confidence 是 { score, comment } 物件，只顯示百分比；
+    // 開源版的 comment 是付費版的推銷文字（"0.997 if upgrade to Pro: https://fpjs.dev/pro"），不顯示給使用者
     formatConfidence(confidence) {
         const score = Number(confidence?.score);
         if (!Number.isFinite(score)) return 'N/A';
-        const percent = `${(score * 100).toFixed(1)}%`;
-        return confidence.comment ? `${percent}（${confidence.comment}）` : percent;
+        return `${(score * 100).toFixed(1)}%`;
     }
 
     // 採集失敗時 canvas 為 'error'，不是圖片；只有 PNG data URL 才顯示預覽，避免對不存在的網址發出請求
