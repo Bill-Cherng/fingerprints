@@ -117,6 +117,7 @@ session({
 ```
 
 - `express.static` 放在 session 之前,靜態檔案請求不會讀寫 sessions 表
+- 所有回應都帶 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: strict-origin-when-cross-origin`,並關閉 `X-Powered-By`
 
 ### 指紋相似度閾值
 
@@ -140,15 +141,22 @@ session({
 - 同時註冊相同名稱被 UNIQUE 限制擋下: 返回 400,不回報成 500
 - Session 過期: 重新載入 CAPTCHA
 
+## 效能與 log
+
+- FingerprintJS 元件值的 JSON 超過 1KB 時 (canvas 影像等),儲存前改存 `sha256:` 雜湊 (`compactComponents`);比對只看值是否相同,未登入比對掃描整張表時不必解析每筆約 40KB 的原始內容
+- 啟動時 `compactStoredComponents` 會把舊紀錄的大型元件值換成雜湊;讀出舊紀錄比對前也會先壓縮,與新資料一致
+- 逐筆相似度計算、指紋內容等除錯訊息以 `debugLog` 輸出,只在 `LOG_LEVEL=debug` 時顯示
+
 ## 測試與調試
 
 - 測試目前使用 Node.js 內建測試執行器 (`node --test`)
-- 調試端點: `GET /api/debug/fingerprint/:id` 可查看完整指紋資料
-- Console 輸出詳細的相似度計算過程 (查看 server.js 終端輸出)
+- 調試端點: `GET /api/debug/fingerprint/:id` 可查看指紋資料 (大型元件值為雜湊)
+- 設定 `LOG_LEVEL=debug` 時,console 會輸出詳細的相似度計算過程
 
 ## 部署注意事項
 
-- 環境變數: `PORT` (Render 自動設定), `SESSION_SECRET` (正式環境必填,未設定時拒絕啟動), `TRUST_PROXY` (代理層數,Render 為 1), `RATE_LIMIT_*` (限流上限)
+- Node 版本: 22 以上 (`.node-version` 指定 Render 使用 22,CI 測試 22 與 24)
+- 環境變數: `PORT` (Render 自動設定), `LOG_LEVEL` (`debug` 時輸出除錯 log), `SESSION_SECRET` (正式環境必填,未設定時拒絕啟動), `TRUST_PROXY` (代理層數,Render 為 1), `RATE_LIMIT_*` (限流上限)
 - 資料庫: SQLite 檔案式資料庫,部署時需持久化儲存
 - 靜態檔案: 自動從 `public/` 目錄提供服務
 - 啟動命令: `npm start` (綁定 0.0.0.0)

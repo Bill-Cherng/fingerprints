@@ -8,7 +8,10 @@ const {
     generateMathCaptcha,
     verifyMathCaptcha,
     calculateMultiFingerprintSimilarity,
-    findChangedComponents,
+    compactComponents,
+    compactStoredComponents,
+    buildFingerprintData,
+    rowToFingerprintData,
     calculateArraySimilarity,
     calculateWebGLSimilarity,
     calculateFingerprintJSSimilarity,
@@ -114,22 +117,54 @@ test('calculateMultiFingerprintSimilarity drops when key traits differ', () => {
     assert.ok(result >= 0);
 });
 
-test('findChangedComponents reports added, changed, and removed entries', () => {
-    const previous = {
-        canvas: { value: 'canvas-hash' },
-        fonts: { value: ['Arial'] },
-        plugins: { value: ['PluginA'] }
+test('compactComponents hashes large component values and keeps small ones', () => {
+    const image = 'data:image/png;base64,' + 'A'.repeat(5000);
+    const components = {
+        canvas: { value: { image, winding: true }, duration: 12 },
+        platform: { value: 'MacIntel', duration: 1 }
     };
-    const current = {
-        canvas: { value: 'other-canvas' },
-        fonts: { value: ['Arial', 'Roboto'] },
-        extra: { value: 123 }
-    };
-    const changes = findChangedComponents(previous, current);
 
-    assert.ok(changes.some(change => change.component === 'canvas' && change.type === 'changed'));
-    assert.ok(changes.some(change => change.component === 'plugins' && change.type === 'removed'));
-    assert.ok(changes.some(change => change.component === 'extra' && change.type === 'added'));
+    const compact = compactComponents(components);
+    assert.match(compact.canvas.value, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(compact.canvas.duration, 12);
+    assert.deepEqual(compact.platform, components.platform);
+
+    // 相同的值得到相同的雜湊，不同的值得到不同的雜湊，重複壓縮不會改變結果
+    assert.equal(compactComponents(structuredClone(components)).canvas.value, compact.canvas.value);
+    const changed = compactComponents({ canvas: { value: { image: image + 'B', winding: true } } });
+    assert.notEqual(changed.canvas.value, compact.canvas.value);
+    assert.deepEqual(compactComponents(compact), compact);
+
+    assert.deepEqual(compactComponents(null), {});
+    assert.deepEqual(compactComponents('not-an-object'), {});
+});
+
+test('an old row with raw component values still matches the same browser after compaction', () => {
+    const components = {
+        canvas: { value: { image: 'X'.repeat(4000) } },
+        platform: { value: 'MacIntel' }
+    };
+    // 修改前存入的紀錄：元件值是原始內容
+    const oldRow = { components: JSON.stringify(components) };
+    const newData = buildFingerprintData({ visitorId: 'same', components });
+
+    assert.match(newData.components.canvas.value, /^sha256:/);
+    assert.equal(calculateMultiFingerprintSimilarity(rowToFingerprintData(oldRow), newData), 100);
+});
+
+test('compactStoredComponents rewrites existing rows that still hold large values', async () => {
+    const run = (sql, params = []) => new Promise((resolve, reject) => db.run(sql, params, (err) => (err ? reject(err) : resolve())));
+    const get = (sql, params = []) => new Promise((resolve, reject) => db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row))));
+    const small = JSON.stringify({ platform: { value: 'Win32' } });
+    await run("INSERT INTO fingerprints (visitor_id, components) VALUES ('compact-big', ?)", [JSON.stringify({ canvas: { value: 'Y'.repeat(3000) } })]);
+    await run("INSERT INTO fingerprints (visitor_id, components) VALUES ('compact-small', ?)", [small]);
+
+    await new Promise((resolve, reject) => compactStoredComponents(db, (err) => (err ? reject(err) : resolve())));
+
+    const big = await get("SELECT components FROM fingerprints WHERE visitor_id = 'compact-big'");
+    assert.match(JSON.parse(big.components).canvas.value, /^sha256:/);
+    const untouched = await get("SELECT components FROM fingerprints WHERE visitor_id = 'compact-small'");
+    assert.equal(untouched.components, small);
 });
 
 test('calculateArraySimilarity handles partial overlap', () => {

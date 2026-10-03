@@ -14,8 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # package.json engines 要求 >=18
-        node-version: [18, 20, 22]
+        # package.json engines 要求 >=22；22 為維護中的 LTS，24 為目前的 Active LTS
+        node-version: [22, 24]
 
     steps:
       - uses: actions/checkout@v4

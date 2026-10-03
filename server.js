@@ -4,9 +4,19 @@ const path = require('path');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// 逐筆的相似度計算、指紋內容等除錯訊息只在 LOG_LEVEL=debug 時輸出：
+// 未登入比對時每筆紀錄都會輸出好幾行，正式環境會拖慢回應、塞滿 log，也會留下使用者資料
+const DEBUG_LOGGING = process.env.LOG_LEVEL === 'debug';
+function debugLog(...args) {
+    if (DEBUG_LOGGING) {
+        console.log(...args);
+    }
+}
 
 // Render 等平台會經過代理伺服器，需設定 TRUST_PROXY（代理層數，例如 1）才能取得使用者的真實 IP；
 // 本機直連時不要設定，否則使用者可以偽造 X-Forwarded-For 繞過依 IP 的限流
@@ -220,6 +230,17 @@ const authLimiter = createRateLimiter({
     limit: envPositiveInt('RATE_LIMIT_AUTH_PER_15_MIN', 20)
 });
 
+// 基本安全標頭，靜態檔案與 API 都套用
+app.disable('x-powered-by'); // 不透露使用的框架
+app.use((req, res, next) => {
+    res.set({
+        'X-Content-Type-Options': 'nosniff', // 禁止瀏覽器猜測內容類型
+        'X-Frame-Options': 'DENY', // 禁止被嵌入 iframe，防止點擊劫持
+        'Referrer-Policy': 'strict-origin-when-cross-origin'
+    });
+    next();
+});
+
 // 中間件
 // 靜態檔案不需要 session，放在 session 之前，避免每個 CSS/JS 請求都寫入 session 資料表
 app.use(express.static(path.join(__dirname, 'public')));
@@ -333,6 +354,36 @@ function migrateFingerprintsTable(database, callback = () => {}) {
     });
 }
 
+// 把舊紀錄中的大型元件值換成雜湊；已經壓縮過的紀錄不會再更新
+function compactStoredComponents(database, callback = () => {}) {
+    database.all('SELECT id, components FROM fingerprints', (err, rows) => {
+        if (err) return callback(err);
+
+        const updates = [];
+        for (const row of rows) {
+            const original = safeJsonParse(row.components, null);
+            if (!original) continue;
+            const compacted = JSON.stringify(compactComponents(original));
+            if (compacted !== JSON.stringify(original)) {
+                updates.push([compacted, row.id]);
+            }
+        }
+        if (updates.length === 0) return callback();
+
+        database.serialize(() => {
+            database.run('BEGIN');
+            const statement = database.prepare('UPDATE fingerprints SET components = ? WHERE id = ?');
+            for (const params of updates) statement.run(params);
+            statement.finalize();
+            database.run('COMMIT', (commitErr) => {
+                if (commitErr) return callback(commitErr);
+                console.log(`已將 ${updates.length} 筆指紋紀錄的大型元件值換成雜湊`);
+                callback();
+            });
+        });
+    });
+}
+
 // 建立資料表；dbReady 在建表與資料表遷移都完成後才 resolve
 const dbReady = new Promise((resolve, reject) => db.serialize(() => {
     db.run(FINGERPRINTS_TABLE_SQL);
@@ -349,7 +400,10 @@ const dbReady = new Promise((resolve, reject) => db.serialize(() => {
         )
     `);
 
-    migrateFingerprintsTable(db, (err) => (err ? reject(err) : resolve()));
+    migrateFingerprintsTable(db, (err) => {
+        if (err) return reject(err);
+        compactStoredComponents(db, (compactErr) => (compactErr ? reject(compactErr) : resolve()));
+    });
 }));
 // 初始化失敗時，錯誤會在請求進來時由等待 dbReady 的 middleware 交給錯誤處理回報
 dbReady.catch((err) => console.error('資料庫初始化失敗:', err));
@@ -364,7 +418,7 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
         const fpSimilarity = calculateFingerprintJSSimilarity(oldData.components, newData.components);
         similarities.push(fpSimilarity);
         weights.push(0.4);
-        console.log('FingerprintJS 相似度:', fpSimilarity);
+        debugLog('FingerprintJS 相似度:', fpSimilarity);
     }
     
     // 2. Canvas 指紋相似度 (權重 20%)
@@ -372,7 +426,7 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
         const canvasSimilarity = calculateCanvasSimilarity(oldData.canvas, newData.canvas);
         similarities.push(canvasSimilarity);
         weights.push(0.2);
-        console.log('Canvas 相似度:', canvasSimilarity);
+        debugLog('Canvas 相似度:', canvasSimilarity);
     }
     
     // 3. WebGL 指紋相似度 (權重 15%)
@@ -382,7 +436,7 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
             similarities.push(webglSimilarity);
             weights.push(0.15);
         }
-        console.log('WebGL 相似度:', webglSimilarity);
+        debugLog('WebGL 相似度:', webglSimilarity);
     }
     
     // 4. 音訊指紋相似度 (權重 10%)
@@ -392,7 +446,7 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
             similarities.push(audioSimilarity);
             weights.push(0.1);
         }
-        console.log('Audio 相似度:', audioSimilarity);
+        debugLog('Audio 相似度:', audioSimilarity);
     }
     
     // 5. 字體指紋相似度 (權重 10%)
@@ -400,7 +454,7 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
         const fontsSimilarity = calculateFontsSimilarity(oldData.fonts, newData.fonts);
         similarities.push(fontsSimilarity);
         weights.push(0.1);
-        console.log('Fonts 相似度:', fontsSimilarity);
+        debugLog('Fonts 相似度:', fontsSimilarity);
     }
     
     // 6. 硬體指紋相似度 (權重 5%)
@@ -410,7 +464,7 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
             similarities.push(hardwareSimilarity);
             weights.push(0.05);
         }
-        console.log('Hardware 相似度:', hardwareSimilarity);
+        debugLog('Hardware 相似度:', hardwareSimilarity);
     }
     
     // 7. 自定義指紋相似度 (權重 5%)
@@ -420,7 +474,7 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
             similarities.push(customSimilarity);
             weights.push(0.05);
         }
-        console.log('Custom 相似度:', customSimilarity);
+        debugLog('Custom 相似度:', customSimilarity);
     }
     
     if (similarities.length === 0) {
@@ -439,7 +493,7 @@ function calculateMultiFingerprintSimilarity(oldData, newData) {
     const finalSimilarity = Math.round((weightedSum / totalWeight) * 10) / 10;
     
     // 調試信息
-    console.log('相似度計算調試:', {
+    debugLog('相似度計算調試:', {
         similarities,
         weights,
         weightedSum,
@@ -702,7 +756,7 @@ app.get('/api/captcha', (req, res) => {
         // 將答案存儲在 session 中
         req.session.captchaAnswer = captcha.answer;
         
-        console.log('生成 CAPTCHA:', { question: captcha.question });
+        debugLog('生成 CAPTCHA:', { question: captcha.question });
         
         // 確保 session 被保存
         req.session.save((err) => {
@@ -717,7 +771,7 @@ app.get('/api/captcha', (req, res) => {
                 });
             }
             
-            console.log('CAPTCHA session 保存成功');
+            debugLog('CAPTCHA session 保存成功');
             
             res.json({
                 question: captcha.question,
@@ -729,37 +783,6 @@ app.get('/api/captcha', (req, res) => {
         res.status(500).json({ error: '無法生成驗證碼' });
     }
 });
-
-// 找出變化的元件
-function findChangedComponents(oldComponents, newComponents) {
-    const changes = [];
-    const allKeys = new Set([...Object.keys(oldComponents), ...Object.keys(newComponents)]);
-    
-    for (const key of allKeys) {
-        const oldValue = oldComponents[key];
-        const newValue = newComponents[key];
-        
-        if (!oldValue && newValue) {
-            changes.push({ component: key, type: 'added', newValue: newValue.value });
-        } else if (oldValue && !newValue) {
-            changes.push({ component: key, type: 'removed', oldValue: oldValue.value });
-        } else if (oldValue && newValue) {
-            const oldVal = JSON.stringify(oldValue.value);
-            const newVal = JSON.stringify(newValue.value);
-            
-            if (oldVal !== newVal) {
-                changes.push({ 
-                    component: key, 
-                    type: 'changed', 
-                    oldValue: oldValue.value, 
-                    newValue: newValue.value 
-                });
-            }
-        }
-    }
-    
-    return changes;
-}
 
 // API 路由：用戶註冊
 app.post('/api/auth/register', authLimiter, async (req, res) => {
@@ -789,7 +812,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     
     const captchaResult = consumeCaptcha(req, captcha);
     if (!captchaResult.valid) {
-        console.log('註冊 CAPTCHA 驗證失敗:', captchaResult.error);
+        debugLog('註冊 CAPTCHA 驗證失敗:', captchaResult.error);
         return res.status(400).json({ error: captchaResult.error });
     }
     
@@ -864,7 +887,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
                             return res.status(500).json({ error: '註冊失敗' });
                         }
 
-                        console.log('新用戶註冊成功:', { id: this.lastID, username, email });
+                        console.log('新用戶註冊成功:', { id: this.lastID, username });
                         res.json({
                             success: true,
                             message: '註冊成功！',
@@ -899,7 +922,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     const captchaResult = consumeCaptcha(req, captcha);
     if (!captchaResult.valid) {
-        console.log('登入 CAPTCHA 驗證失敗:', captchaResult.error);
+        debugLog('登入 CAPTCHA 驗證失敗:', captchaResult.error);
         return res.status(400).json({ error: captchaResult.error });
     }
 
@@ -937,7 +960,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
                 // 如果勾選「記住我」，延長 cookie 有效期到 30 天
                 if (rememberMe) {
                     req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 天
-                    console.log('啟用「記住我」功能，session 有效期延長至 30 天');
+                    debugLog('啟用「記住我」功能，session 有效期延長至 30 天');
                 } else {
                     req.session.cookie.maxAge = 24 * 60 * 60 * 1000; // 1 天（預設）
                 }
@@ -1035,7 +1058,7 @@ app.post('/api/fingerprint', fingerprintLimiter, (req, res) => {
         return res.status(400).json({ error: '缺少訪客 ID' });
     }
 
-    console.log('收到多重指紋資料:', {
+    debugLog('收到多重指紋資料:', {
         visitorId,
         confidence: confidence?.score,
         version,
@@ -1054,7 +1077,7 @@ app.post('/api/fingerprint', fingerprintLimiter, (req, res) => {
     });
     
     // 調試：顯示所有元件名稱
-    console.log('採集的元件:', Object.keys(components || {}).sort().join(', '));
+    debugLog('採集的元件:', Object.keys(components || {}).sort().join(', '));
     
     const fingerprintData = buildFingerprintData(req.body);
 
@@ -1078,6 +1101,29 @@ function safeJsonParse(text, fallback) {
     }
 }
 
+// FingerprintJS 元件中超過這個長度（JSON 字元數）的值，儲存時改存雜湊
+const COMPONENT_VALUE_HASH_THRESHOLD = 1024;
+const HASHED_VALUE_PREFIX = 'sha256:';
+
+// 比對只看元件值是否完全相同，不需要原始內容；canvas 等元件含整張影像（每筆約 40KB），
+// 未登入比對時要解析整張指紋表，換成雜湊後資料量與比對時間都能大幅下降
+function compactComponents(components) {
+    if (!components || typeof components !== 'object' || Array.isArray(components)) {
+        return {};
+    }
+    const compact = {};
+    for (const [key, component] of Object.entries(components)) {
+        const json = component && typeof component === 'object' ? JSON.stringify(component.value) : undefined;
+        if (json !== undefined && json.length > COMPONENT_VALUE_HASH_THRESHOLD) {
+            const hash = crypto.createHash('sha256').update(json).digest('hex');
+            compact[key] = { ...component, value: HASHED_VALUE_PREFIX + hash };
+        } else {
+            compact[key] = component;
+        }
+    }
+    return compact;
+}
+
 // 採集失敗的指紋（帶有 error 欄位）視為沒有資料，避免兩筆錯誤結果被當成相同
 function usableFingerprint(value) {
     if (!value || typeof value !== 'object' || value.error) return {};
@@ -1095,7 +1141,7 @@ function buildFingerprintData(body) {
         version,
         clientId,
         collectionTime,
-        components: components || {},
+        components: compactComponents(components),
         canvas: canvas && canvas !== 'error' ? hashString(canvas) : '',
         webgl: usableFingerprint(webgl),
         audio: usableFingerprint(audio),
@@ -1109,7 +1155,8 @@ function buildFingerprintData(body) {
 // 將資料庫紀錄還原成比對用的結構
 function rowToFingerprintData(row) {
     return {
-        components: safeJsonParse(row.components, {}),
+        // 舊紀錄可能還存著原始的大型元件值，比對前同樣換成雜湊，才能和新資料一致
+        components: compactComponents(safeJsonParse(row.components, {})),
         canvas: row.canvas_fingerprint || '',
         webgl: safeJsonParse(row.webgl_fingerprint, {}),
         audio: safeJsonParse(row.audio_fingerprint, {}),
@@ -1174,7 +1221,7 @@ function handleLoggedInUserFingerprint(req, res, newData) {
                             return res.status(500).json({ error: '更新失敗' });
                         }
                         
-                        console.log(`更新登入用戶 ${userId} 的指紋, 相似度: ${similarity.toFixed(1)}%`);
+                        debugLog(`更新登入用戶 ${userId} 的指紋, 相似度: ${similarity.toFixed(1)}%`);
                         
                         // 查詢用戶名稱
                         db.get('SELECT username FROM accounts WHERE id = ?', [userId], (userErr, user) => {
@@ -1201,7 +1248,7 @@ function handleLoggedInUserFingerprint(req, res, newData) {
                             return res.status(500).json({ error: '新增失敗' });
                         }
                         
-                        console.log(`新增登入用戶 ${userId} 的指紋記錄`);
+                        debugLog(`新增登入用戶 ${userId} 的指紋記錄`);
                         
                         // 查詢用戶名稱
                         db.get('SELECT username FROM accounts WHERE id = ?', [userId], (userErr, user) => {
@@ -1240,7 +1287,7 @@ function handleGuestUserFingerprint(req, res, newData) {
             for (const user of allUsers) {
                 const similarity = calculateMultiFingerprintSimilarity(rowToFingerprintData(user), newData);
                 
-                console.log(`與指紋 ID ${user.id} (用戶: ${user.username || '未登入'}) 多重指紋相似度: ${similarity.toFixed(1)}%`);
+                debugLog(`與指紋 ID ${user.id} (用戶: ${user.username || '未登入'}) 多重指紋相似度: ${similarity.toFixed(1)}%`);
                 
                 if (similarity > 0) { // 只記錄有相似度的結果
                     similarityResults.push({
@@ -1260,7 +1307,7 @@ function handleGuestUserFingerprint(req, res, newData) {
 
             // **關鍵：返回前5個最相似的用戶**
             if (top5Matches.length > 0) {
-                console.log(`找到 ${top5Matches.length} 個相似用戶，最高相似度: ${top5Matches[0].similarity.toFixed(1)}%`);
+                debugLog(`找到 ${top5Matches.length} 個相似用戶，最高相似度: ${top5Matches[0].similarity.toFixed(1)}%`);
                 
                 // 生成相似度列表訊息
                 const similarityList = top5Matches.map((match, index) => 
@@ -1277,7 +1324,7 @@ function handleGuestUserFingerprint(req, res, newData) {
                 });
             } else {
                 // 沒有找到相似的指紋
-                console.log('沒有找到相似的指紋');
+                debugLog('沒有找到相似的指紋');
                 
                 res.json({
                     isNewUser: true,
@@ -1396,9 +1443,10 @@ module.exports = {
     calculateCustomSimilarity,
     calculateArraySimilarity,
     hashString,
-    findChangedComponents,
     consumeCaptcha,
     migrateFingerprintsTable,
+    compactComponents,
+    compactStoredComponents,
     buildFingerprintData,
     rowToFingerprintData
 };
