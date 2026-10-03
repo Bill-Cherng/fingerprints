@@ -122,7 +122,7 @@ test('login and register forms submit with Enter, once, and buttons inside do no
         await page.click('#refreshRegisterCaptcha');
         await page.waitForTimeout(200);
         assert.deepEqual(authPosts(), []);
-        assert.equal(await page.textContent('.form-hint'), '可用於登入');
+        assert.equal(await page.textContent('#registerEmail + .form-hint'), '可用於登入');
 
         // 連按兩次 Enter 只送出一次（驗證碼只能用一次，重複送出必定失敗）
         await page.fill('#registerUsername', 'enteruser');
@@ -363,6 +363,34 @@ test('long values such as the client ID wrap instead of being cut off on a phone
             };
         });
         assert.deepEqual(overflow, { scrollsSideways: false, sticksOut: 0 });
+    } finally {
+        await context.close();
+    }
+});
+
+test('the register form rejects invalid usernames and over-long passwords before sending', async () => {
+    const { context, page, requests } = await openPage();
+    const registerPosts = () => requests.filter((r) => r.method === 'POST' && r.url.endsWith('/api/auth/register')).length;
+    try {
+        await page.goto(baseUrl);
+        await page.click('#toggleAuthBtn');
+        await page.click('#showRegisterBtn');
+        assert.equal(await page.getAttribute('#registerUsername', 'maxlength'), '30');
+
+        const attempt = async (username, password) => {
+            await page.fill('#registerUsername', username);
+            await page.fill('#registerPassword', password);
+            await page.fill('#confirmPassword', password);
+            await page.fill('#registerCaptcha', '1');
+            await page.press('#registerCaptcha', 'Enter');
+            await page.waitForSelector('#formErrorMessage', { state: 'visible' });
+            return page.textContent('#formErrorMessage');
+        };
+
+        assert.match(await attempt('look alike', 'secret123'), /3–30/);
+        assert.match(await attempt('look​alike', 'secret123'), /3–30/);
+        assert.match(await attempt('validname', '密'.repeat(25)), /密碼過長/);
+        assert.equal(registerPosts(), 0);
     } finally {
         await context.close();
     }

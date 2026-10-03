@@ -55,7 +55,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 2. 使用者驗證系統
 
-- **註冊** (`POST /api/auth/register`): bcryptjs 雜湊密碼,需通過數學驗證碼;使用者名稱至少 3 個字元且不可包含 `@` (登入欄位同時接受使用者名稱或 Email,避免名稱冒用別人的 Email)
+- **註冊** (`POST /api/auth/register`): bcryptjs 雜湊密碼,需通過數學驗證碼;欄位規則集中在 `validateRegistration` (前端 `register()` 有相同檢查):
+  - 使用者名稱 3–30 個字母 (含中文)、數字或 `_ . -`,不可有空白、零寬字元等容易混淆的字元,也不可包含 `@` (登入欄位同時接受使用者名稱或 Email,避免名稱冒用別人的 Email)
+  - Email 最多 254 字元;密碼至少 6 字元、最多 72 bytes (bcrypt 只使用前 72 bytes,中文約 24 字)
+  - 登入不檢查長度,修改前註冊的帳號仍可照常登入
 - **登入** (`POST /api/auth/login`): bcrypt 密碼驗證,需通過數學驗證碼,成功後以 `session.regenerate()` 換發新 session ID;輸入同時符合某帳號的使用者名稱與另一帳號的 Email 時,以 Email 相符者優先
 - **Session 管理**: express-session + cookie (24小時有效期),session 以 `SQLiteSessionStore` 存在同一個 SQLite 資料庫的 `sessions` 表,過期資料每 15 分鐘清除
 - **CAPTCHA**: 自製數學驗證碼 (加減乘運算),答案儲存在 session 中
