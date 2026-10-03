@@ -102,6 +102,34 @@ function resolveSessionSecret() {
     return 'fingerprint-session-secret-key-2025'; // 僅供本機開發與測試
 }
 
+// 帳號欄位規則
+// 使用者名稱只允許字母（含中文等各國文字）、數字與 _ . -：排除空白、換行、零寬字元等看不見或容易混淆的字元，
+// 避免「alice」與「alice 」這類外觀相同的帳號互相冒充；也排除 @，避免名稱與別人的 Email 重疊
+const USERNAME_PATTERN = /^[\p{L}\p{N}_.-]{3,30}$/u;
+const MAX_EMAIL_LENGTH = 254; // RFC 5321 的 Email 長度上限
+const MIN_PASSWORD_LENGTH = 6;
+const MAX_PASSWORD_BYTES = 72; // bcrypt 只使用密碼的前 72 bytes，超過的部分會被忽略
+
+// 回傳錯誤訊息；欄位都符合規則時回傳 null
+function validateRegistration({ username, email, password }) {
+    if (username.includes('@')) {
+        return '使用者名稱不可包含 @';
+    }
+    if (!USERNAME_PATTERN.test(username)) {
+        return '使用者名稱需為 3–30 個字母、數字或 _ . -（不可包含空白）';
+    }
+    if (email && email.length > MAX_EMAIL_LENGTH) {
+        return 'Email 過長';
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+        return `密碼至少需要 ${MIN_PASSWORD_LENGTH} 個字元`;
+    }
+    if (Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES) {
+        return '密碼過長（最多 72 bytes，英數約 72 字、中文約 24 字）';
+    }
+    return null;
+}
+
 // JSON body 可以帶任何型別；帳號欄位必須是字串，否則 bcrypt 會拋出例外，資料庫也會存進 "[object Object]"
 function hasInvalidFieldTypes(fields) {
     return Object.values(fields).some(value => value !== undefined && value !== null && typeof value !== 'string');
@@ -797,8 +825,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
         return res.status(400).json({ error: '請填寫所有欄位' });
     }
 
-    // 驗證 email 格式（如果提供）
-    if (email) {
+    // 驗證 email 格式（如果提供）；長度先檢查，避免對超長字串跑正規表示式
+    if (email && email.length <= MAX_EMAIL_LENGTH) {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
             return res.status(400).json({ error: 'Email 格式不正確' });
@@ -816,17 +844,9 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
         return res.status(400).json({ error: captchaResult.error });
     }
     
-    if (username.length < 3) {
-        return res.status(400).json({ error: '使用者名稱至少需要 3 個字元' });
-    }
-
-    // 登入欄位同時接受使用者名稱或 Email；使用者名稱若可以含 @，就能註冊成別人的 Email，讓對方無法用 Email 登入
-    if (username.includes('@')) {
-        return res.status(400).json({ error: '使用者名稱不可包含 @' });
-    }
-    
-    if (password.length < 6) {
-        return res.status(400).json({ error: '密碼至少需要 6 個字元' });
+    const validationError = validateRegistration({ username, email, password });
+    if (validationError) {
+        return res.status(400).json({ error: validationError });
     }
     
     try {
@@ -1444,6 +1464,7 @@ module.exports = {
     calculateArraySimilarity,
     hashString,
     consumeCaptcha,
+    validateRegistration,
     migrateFingerprintsTable,
     compactComponents,
     compactStoredComponents,

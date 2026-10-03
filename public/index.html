@@ -281,11 +281,12 @@
             <form class="auth-form" id="registerForm" style="display: none;" novalidate>
                 <div class="form-group">
                     <label for="registerUsername">用戶名：</label>
-                    <input type="text" id="registerUsername" placeholder="請輸入用戶名（必填）" autocomplete="username">
+                    <input type="text" id="registerUsername" placeholder="請輸入用戶名（必填）" autocomplete="username" maxlength="30">
+                    <small class="form-hint">3–30 個字母、數字或 _ . -，不可包含空白</small>
                 </div>
                 <div class="form-group">
                     <label for="registerEmail">Email：</label>
-                    <input type="email" id="registerEmail" placeholder="請輸入 Email（選填）" autocomplete="email">
+                    <input type="email" id="registerEmail" placeholder="請輸入 Email（選填）" autocomplete="email" maxlength="254">
                     <small class="form-hint">可用於登入</small>
                 </div>
                 <div class="form-group">

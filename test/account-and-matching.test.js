@@ -186,3 +186,40 @@ test('the server closes the database and exits cleanly on SIGTERM', async () => 
     assert.equal(code, 0);
     assert.match(stdout, /資料庫已關閉/);
 });
+
+test('registration rejects usernames that are too long or only differ by spaces or invisible characters', async () => {
+    const accepted = createClient();
+    assert.equal((await register(accepted, { username: 'lookalike' })).status, 200);
+
+    // 外觀與 lookalike 相同、或超出長度的名稱
+    for (const username of ['lookalike ', ' lookalike', 'look​alike', 'look\nalike', 'u'.repeat(31), 'u'.repeat(50000)]) {
+        const request = createClient();
+        const result = await register(request, { username });
+        assert.equal(result.status, 400, JSON.stringify(username.slice(0, 40)));
+        assert.match(result.body.error, /3–30/);
+    }
+
+    // 中文與 _ . - 是允許的
+    const chinese = createClient();
+    assert.equal((await register(chinese, { username: '王小明_test.01-a' })).status, 200);
+
+    const stored = await queryAll("SELECT username FROM accounts WHERE username LIKE '%lookalike%' OR length(username) > 30");
+    assert.deepEqual(stored.map((row) => row.username), ['lookalike']);
+});
+
+test('registration rejects overly long emails and passwords bcrypt would truncate', async () => {
+    const longEmail = createClient();
+    const emailResult = await register(longEmail, { username: 'longemail', email: `${'a'.repeat(250)}@x.com` });
+    assert.equal(emailResult.status, 400);
+    assert.match(emailResult.body.error, /Email 過長/);
+
+    // bcrypt 只使用前 72 bytes：72 個英數字可以，73 個不行；中文一個字 3 bytes，25 個字就超過
+    const exact = createClient();
+    assert.equal((await register(exact, { username: 'pw72', password: 'p'.repeat(72) })).status, 200);
+    for (const [username, password] of [['pw73', 'p'.repeat(73)], ['pwzh', '密'.repeat(25)]]) {
+        const request = createClient();
+        const result = await register(request, { username, password });
+        assert.equal(result.status, 400, username);
+        assert.match(result.body.error, /密碼過長/);
+    }
+});

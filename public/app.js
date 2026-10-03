@@ -1384,18 +1384,25 @@ class MultiFingerprintApp {
             return;
         }
 
-        if (username.length < 3) {
-            this.showFormError('用戶名至少需要 3 個字元');
-            return;
-        }
-
+        // 規則與 server.js 的 validateRegistration 相同
         if (username.includes('@')) {
             this.showFormError('用戶名不可包含 @');
             return;
         }
 
+        if (!/^[\p{L}\p{N}_.-]{3,30}$/u.test(username)) {
+            this.showFormError('用戶名需為 3–30 個字母、數字或 _ . -（不可包含空白）');
+            return;
+        }
+
         if (password.length < 6) {
             this.showFormError('密碼至少需要 6 個字元');
+            return;
+        }
+
+        // bcrypt 只使用密碼的前 72 bytes，超過的部分會被忽略
+        if (new TextEncoder().encode(password).length > 72) {
+            this.showFormError('密碼過長（最多 72 bytes，英數約 72 字、中文約 24 字）');
             return;
         }
 
@@ -1405,6 +1412,11 @@ class MultiFingerprintApp {
         }
 
         // 驗證 email 格式（如果填寫）
+        if (email.length > 254) {
+            this.showFormError('Email 過長');
+            return;
+        }
+
         if (email) {
             const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             if (!emailRegex.test(email)) {
