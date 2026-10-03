@@ -258,10 +258,25 @@ const authLimiter = createRateLimiter({
     limit: envPositiveInt('RATE_LIMIT_AUTH_PER_15_MIN', 20)
 });
 
+// Content Security Policy：只允許同網站的 script，被注入的 script 不會執行（XSS 的第二道防線）
+// style 需允許 'unsafe-inline'：頁面與 app.js 產生的 HTML 有 style 屬性；img 需允許 data:，Canvas 預覽是 data URL
+const CONTENT_SECURITY_POLICY = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'"
+].join('; ');
+
 // 基本安全標頭，靜態檔案與 API 都套用
 app.disable('x-powered-by'); // 不透露使用的框架
 app.use((req, res, next) => {
     res.set({
+        'Content-Security-Policy': CONTENT_SECURITY_POLICY,
         'X-Content-Type-Options': 'nosniff', // 禁止瀏覽器猜測內容類型
         'X-Frame-Options': 'DENY', // 禁止被嵌入 iframe，防止點擊劫持
         'Referrer-Policy': 'strict-origin-when-cross-origin'
@@ -1088,8 +1103,7 @@ app.post('/api/fingerprint', fingerprintLimiter, (req, res) => {
         fonts,
         plugins,
         hardware,
-        collectionTime,
-        timestamp 
+        collectionTime
     } = req.body;
 
     // 這些欄位會直接存入資料庫或做雜湊，型別不對時回 400，避免存進 "[object Object]" 或在雜湊時拋出例外
@@ -1470,7 +1484,7 @@ const CLIENT_ERROR_MESSAGES = {
     413: '請求內容過大'
 };
 
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => { // 必須保留四個參數，Express 才會當成錯誤處理中介軟體
     const status = err.status || err.statusCode;
     if (status >= 400 && status < 500) {
         return res.status(status).json({ error: CLIENT_ERROR_MESSAGES[status] || '請求無法處理' });

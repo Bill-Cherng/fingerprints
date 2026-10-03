@@ -395,3 +395,75 @@ test('the register form rejects invalid usernames and over-long passwords before
         await context.close();
     }
 });
+
+test('dialogs move keyboard focus inside, keep Tab within, and return focus when closed', async () => {
+    const { context, page } = await openPage();
+    const focused = () => page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName);
+    const focusInside = (selector) => page.evaluate((s) => document.querySelector(s).contains(document.activeElement), selector);
+    try {
+        await page.goto(baseUrl);
+        await waitForReady(page);
+
+        // 登入視窗：開啟後焦點在帳號欄位
+        await page.focus('#toggleAuthBtn');
+        await page.keyboard.press('Enter');
+        await page.waitForFunction(() => document.activeElement?.id === 'loginUsername');
+
+        // 連按 Tab 都停在視窗內
+        for (let i = 0; i < 15; i++) {
+            await page.keyboard.press('Tab');
+            assert.equal(await focusInside('#authModal'), true, `Tab #${i + 1} left the dialog (focus on ${await focused()})`);
+        }
+        await page.keyboard.press('Shift+Tab');
+        assert.equal(await focusInside('#authModal'), true);
+
+        // 切換到註冊表單，焦點移到註冊的第一個欄位
+        await page.click('#showRegisterBtn');
+        assert.equal(await focused(), 'registerUsername');
+
+        // Esc 關閉後焦點回到原本的按鈕
+        await page.keyboard.press('Escape');
+        assert.equal(await focused(), 'toggleAuthBtn');
+
+        // 隱私同意視窗：焦點在「同意」，關閉後回到「開始採集指紋」
+        await page.focus('#collectBtn');
+        await page.keyboard.press('Enter');
+        assert.equal(await focused(), 'agreeBtn');
+        await page.keyboard.press('Escape');
+        assert.equal(await focused(), 'collectBtn');
+    } finally {
+        await context.close();
+    }
+});
+
+test('the Content Security Policy blocks inline scripts without breaking the page', async () => {
+    const { context, page, fingerprintBodies, fingerprintResponses } = await openPage();
+    try {
+        await page.addInitScript(() => {
+            window.cspViolations = [];
+            document.addEventListener('securitypolicyviolation', (e) => window.cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`));
+        });
+        const response = await page.goto(baseUrl);
+        assert.match(response.headers()['content-security-policy'], /script-src 'self'/);
+
+        await waitForReady(page);
+        await collect(page, fingerprintResponses);
+        await page.click('#toggleAuthBtn');
+        await page.waitForTimeout(300);
+
+        // 正常操作不會觸發任何違規，FingerprintJS 的元件也都採集得到
+        assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
+        assert.ok(Object.keys(fingerprintBodies[0].components).length > 30);
+
+        // 被注入的內嵌 script 不會執行
+        await page.evaluate(() => {
+            window.injected = false;
+            const script = document.createElement('script');
+            script.textContent = 'window.injected = true;';
+            document.body.appendChild(script);
+        });
+        assert.equal(await page.evaluate(() => window.injected), false);
+    } finally {
+        await context.close();
+    }
+});

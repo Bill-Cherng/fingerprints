@@ -11,17 +11,20 @@
     "dev": "nodemon server.js",
     "build": "echo 'No build step required'",
     "test": "node --test test/*.test.js",
-    "test:e2e": "node --test e2e/*.e2e.js"
+    "test:e2e": "node --test e2e/*.e2e.js",
+    "lint": "eslint ."
   },
   "dependencies": {
-    "@fingerprintjs/fingerprintjs": "^4.6.2",
-    "bcryptjs": "^3.0.2",
+    "bcryptjs": "^3.0.3",
     "express": "^4.18.2",
     "express-rate-limit": "^8.7.0",
-    "express-session": "^1.18.2",
-    "sqlite3": "^5.1.6"
+    "express-session": "^1.19.0",
+    "sqlite3": "^6.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
     "nodemon": "^3.0.1",
     "playwright": "1.56.1"
   },
