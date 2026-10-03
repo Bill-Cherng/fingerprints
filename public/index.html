@@ -223,10 +223,10 @@
     </div>
 
     <!-- 隱私同意視窗 -->
-    <div id="privacyModal" class="modal">
+    <div id="privacyModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="privacyModalTitle">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>隱私聲明</h3>
+                <h3 id="privacyModalTitle">隱私聲明</h3>
             </div>
             <div class="modal-body">
                 <p>本網頁為瀏覽器指紋技術的展示測試。同意後，將蒐集您的裝置與瀏覽器設定（例如螢幕、字型、顯示卡、時區）產生指紋，並在您的瀏覽器中儲存一組識別碼。這些資料不會用於行銷。</p>
@@ -241,28 +241,28 @@
     </div>
 
     <!-- 認證彈出視窗 -->
-    <div id="authModal" class="modal">
+    <div id="authModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
         <div class="modal-content">
             <div class="modal-header">
                 <h3 id="modalTitle">用戶登入</h3>
-                <button id="closeModal" class="close-btn">&times;</button>
+                <button type="button" id="closeModal" class="close-btn" aria-label="關閉">&times;</button>
             </div>
             
-            <!-- 登入表單 -->
-            <div class="auth-form" id="loginForm">
+            <!-- 登入表單：使用 <form>，按 Enter 即可送出，密碼管理工具也能辨認欄位 -->
+            <form class="auth-form" id="loginForm" novalidate>
                 <div class="form-group">
                     <label for="loginUsername">用戶名/Email：</label>
-                    <input type="text" id="loginUsername" placeholder="請輸入用戶名或 Email">
+                    <input type="text" id="loginUsername" placeholder="請輸入用戶名或 Email" autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label for="loginPassword">密碼：</label>
-                    <input type="password" id="loginPassword" placeholder="請輸入密碼">
+                    <input type="password" id="loginPassword" placeholder="請輸入密碼" autocomplete="current-password">
                 </div>
                 <div class="form-group">
                     <label for="loginCaptcha">驗證碼：</label>
                     <div class="captcha-container">
                         <span id="loginCaptchaQuestion">載入中...</span>
-                        <input type="number" id="loginCaptcha" placeholder="請輸入答案">
+                        <input type="number" id="loginCaptcha" placeholder="請輸入答案" autocomplete="off">
                         <button type="button" id="refreshLoginCaptcha" class="btn btn-small">重新生成</button>
                     </div>
                 </div>
@@ -273,43 +273,43 @@
                     </label>
                 </div>
                 <div class="form-buttons">
-                    <button id="loginBtn" class="btn btn-primary">登入</button>
-                    <button id="showRegisterBtn" class="btn btn-secondary">註冊新帳號</button>
+                    <button type="submit" id="loginBtn" class="btn btn-primary">登入</button>
+                    <button type="button" id="showRegisterBtn" class="btn btn-secondary">註冊新帳號</button>
                 </div>
-            </div>
+            </form>
 
             <!-- 註冊表單 -->
-            <div class="auth-form" id="registerForm" style="display: none;">
+            <form class="auth-form" id="registerForm" style="display: none;" novalidate>
                 <div class="form-group">
                     <label for="registerUsername">用戶名：</label>
-                    <input type="text" id="registerUsername" placeholder="請輸入用戶名（必填）">
+                    <input type="text" id="registerUsername" placeholder="請輸入用戶名（必填）" autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label for="registerEmail">Email：</label>
-                    <input type="email" id="registerEmail" placeholder="請輸入 Email（選填）">
-                    <small class="form-hint">可用於登入和找回密碼</small>
+                    <input type="email" id="registerEmail" placeholder="請輸入 Email（選填）" autocomplete="email">
+                    <small class="form-hint">可用於登入</small>
                 </div>
                 <div class="form-group">
                     <label for="registerPassword">密碼：</label>
-                    <input type="password" id="registerPassword" placeholder="請輸入密碼（至少 6 個字元）">
+                    <input type="password" id="registerPassword" placeholder="請輸入密碼（至少 6 個字元）" autocomplete="new-password">
                 </div>
                 <div class="form-group">
                     <label for="confirmPassword">確認密碼：</label>
-                    <input type="password" id="confirmPassword" placeholder="請再次輸入密碼">
+                    <input type="password" id="confirmPassword" placeholder="請再次輸入密碼" autocomplete="new-password">
                 </div>
                 <div class="form-group">
                     <label for="registerCaptcha">驗證碼：</label>
                     <div class="captcha-container">
                         <span id="registerCaptchaQuestion">載入中...</span>
-                        <input type="number" id="registerCaptcha" placeholder="請輸入答案">
+                        <input type="number" id="registerCaptcha" placeholder="請輸入答案" autocomplete="off">
                         <button type="button" id="refreshRegisterCaptcha" class="btn btn-small">重新生成</button>
                     </div>
                 </div>
                 <div class="form-buttons">
-                    <button id="registerBtn" class="btn btn-primary">註冊</button>
-                    <button id="showLoginBtn" class="btn btn-secondary">已有帳號，登入</button>
+                    <button type="submit" id="registerBtn" class="btn btn-primary">註冊</button>
+                    <button type="button" id="showLoginBtn" class="btn btn-secondary">已有帳號，登入</button>
                 </div>
-            </div>
+            </form>
         </div>
     </div>
 

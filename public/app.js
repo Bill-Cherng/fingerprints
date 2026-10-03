@@ -1016,8 +1016,6 @@ class MultiFingerprintApp {
         const collectBtn = document.getElementById('collectBtn');
         const clearBtn = document.getElementById('clearBtn');
         const toggleAuthBtn = document.getElementById('toggleAuthBtn');
-        const loginBtn = document.getElementById('loginBtn');
-        const registerBtn = document.getElementById('registerBtn');
         const showRegisterBtn = document.getElementById('showRegisterBtn');
         const showLoginBtn = document.getElementById('showLoginBtn');
         const closeModalBtn = document.getElementById('closeModal');
@@ -1032,8 +1030,15 @@ class MultiFingerprintApp {
         collectBtn.addEventListener('click', () => this.showPrivacyModal());
         clearBtn.addEventListener('click', () => this.clearResults());
         toggleAuthBtn.addEventListener('click', () => this.showAuthModal());
-        loginBtn.addEventListener('click', () => this.login());
-        registerBtn.addEventListener('click', () => this.register());
+        // 登入與註冊是 <form>：點按鈕或在欄位按 Enter 都會觸發 submit，由這裡改用 fetch 送出
+        document.getElementById('loginForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.login();
+        });
+        document.getElementById('registerForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.register();
+        });
         showRegisterBtn.addEventListener('click', () => this.showRegisterForm());
         showLoginBtn.addEventListener('click', () => this.showLoginForm());
         closeModalBtn.addEventListener('click', () => this.closeAuthModal());
@@ -1326,6 +1331,10 @@ class MultiFingerprintApp {
             return;
         }
 
+        // 送出中再按 Enter 或按鈕時不重複送出；驗證碼只能用一次，重複送出的那筆一定會失敗並蓋掉結果
+        if (this.authRequestPending) return;
+        this.authRequestPending = true;
+
         try {
             const response = await fetch('/api/auth/login', {
                 method: 'POST',
@@ -1356,6 +1365,8 @@ class MultiFingerprintApp {
         } catch (error) {
             console.error('登入失敗:', error);
             this.showFormError('登入失敗: ' + error.message);
+        } finally {
+            this.authRequestPending = false;
         }
     }
 
@@ -1407,6 +1418,9 @@ class MultiFingerprintApp {
             return;
         }
 
+        if (this.authRequestPending) return;
+        this.authRequestPending = true;
+
         try {
             const response = await fetch('/api/auth/register', {
                 method: 'POST',
@@ -1442,6 +1456,8 @@ class MultiFingerprintApp {
         } catch (error) {
             console.error('註冊失敗:', error);
             this.showFormError('註冊失敗: ' + error.message);
+        } finally {
+            this.authRequestPending = false;
         }
     }
 
