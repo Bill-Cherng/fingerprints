@@ -2,12 +2,11 @@
 class MultiFingerprintApp {
     constructor() {
         this.fp = null;
-        this.isInitialized = false;
         this.currentUser = null;
         this.clientId = null;
         this.fingerprintData = {};
         this.bindEvents();
-        this.checkAuthStatus();
+        this.authStatusChecked = this.checkAuthStatus();
         this.init();
     }
 
@@ -23,7 +22,6 @@ class MultiFingerprintApp {
             // 載入 FingerprintJS
             await this.loadFingerprintJS();
             
-            this.isInitialized = true;
             console.log('多重指紋採集系統初始化成功');
             
             // 等待 DOM 完全載入後再更新 UI
@@ -39,6 +37,8 @@ class MultiFingerprintApp {
             
         } catch (error) {
             console.error('多重指紋採集系統初始化失敗:', error);
+            // 等登入狀態檢查完成再顯示，否則錯誤訊息會立刻被「未登入/已登入」狀態蓋掉
+            await this.authStatusChecked;
             this.showError('系統初始化失敗: ' + error.message);
         }
     }
@@ -1420,6 +1420,7 @@ class MultiFingerprintApp {
 
         if (this.authRequestPending) return;
         this.authRequestPending = true;
+        let switchingToLogin = false;
 
         try {
             const response = await fetch('/api/auth/register', {
@@ -1441,12 +1442,14 @@ class MultiFingerprintApp {
                 // 註冊成功後切換到登入表單，並預填使用者名稱
                 this.showSuccess('註冊成功！請使用新帳號登入');
 
-                // 等待一下再關閉
+                // 切換到登入表單前，欄位內容還在；保持送出中狀態，避免再按 Enter 用同一組資料重複註冊
+                switchingToLogin = true;
                 setTimeout(() => {
                     this.closeAuthModal();
                     this.showAuthModal();
                     // 預填用戶名
                     document.getElementById('loginUsername').value = username;
+                    this.authRequestPending = false;
                 }, 1500);
             } else {
                 this.showFormError(data.error || '註冊失敗');
@@ -1457,7 +1460,9 @@ class MultiFingerprintApp {
             console.error('註冊失敗:', error);
             this.showFormError('註冊失敗: ' + error.message);
         } finally {
-            this.authRequestPending = false;
+            if (!switchingToLogin) {
+                this.authRequestPending = false;
+            }
         }
     }
 
@@ -1520,10 +1525,16 @@ class MultiFingerprintApp {
 // 主題管理器
 class ThemeManager {
     constructor() {
-        this.theme = this.getStoredTheme() || 'light';
+        // 使用者沒有手動切換過時，跟隨作業系統的深色/淺色設定
+        this.systemDarkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+        this.theme = this.getStoredTheme() || this.getSystemTheme();
         this.button = null;
         this.icon = null;
         this.init();
+    }
+
+    getSystemTheme() {
+        return this.systemDarkQuery?.matches ? 'dark' : 'light';
     }
 
     init() {
@@ -1544,11 +1555,19 @@ class ThemeManager {
         if (this.button) {
             this.button.addEventListener('click', () => this.toggleTheme());
         }
+
+        // 系統設定改變時，沒有手動切換過的使用者也跟著改變
+        this.systemDarkQuery?.addEventListener?.('change', () => {
+            if (!this.getStoredTheme()) {
+                this.applyTheme(this.getSystemTheme());
+            }
+        });
     }
 
     getStoredTheme() {
         try {
-            return localStorage.getItem('theme');
+            const theme = localStorage.getItem('theme');
+            return theme === 'light' || theme === 'dark' ? theme : null;
         } catch (error) {
             console.warn('無法讀取主題設定:', error);
             return null;
@@ -1563,16 +1582,17 @@ class ThemeManager {
         }
     }
 
+    // 只有使用者手動切換時才儲存；否則第一次開啟就會把當下的系統設定寫死
     applyTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
         this.theme = theme;
         this.updateIcon();
-        this.setStoredTheme(theme);
     }
 
     toggleTheme() {
         const newTheme = this.theme === 'light' ? 'dark' : 'light';
         this.applyTheme(newTheme);
+        this.setStoredTheme(newTheme);
     }
 
     updateIcon() {

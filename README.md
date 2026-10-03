@@ -85,8 +85,9 @@ fingerprints/
 │   ├── index.html         # 主頁面
 │   ├── style.css          # 樣式
 │   ├── app.js             # 前端邏輯
-│   └── lib/               # FingerprintJS 本地版本
-├── test/                  # 測試（node --test）
+│   └── lib/               # FingerprintJS 本地版本（唯一載入來源，不使用外部 CDN）
+├── test/                  # 後端與 API 測試（npm test）
+├── e2e/                   # 瀏覽器測試（npm run test:e2e，需先執行 npx playwright install chromium）
 ├── fingerprints.db        # SQLite 資料庫（執行時自動建立，不納入版控）
 └── README.md              # 專案說明
 ```

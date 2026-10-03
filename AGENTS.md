@@ -7,6 +7,7 @@ Source logic lives in `server.js`, which wires Express routes, SQLite models, an
 - `npm install`: Installs Express, sqlite3, nodemon, and other required packages.
 - `npm run dev`: Starts the hot-reload server on `http://localhost:3000` for day-to-day changes.
 - `npm start`: Boots the production server, mirroring Render’s deployment entrypoint.
+- `npm run test:e2e`: Runs the browser tests in `e2e/` with Playwright and Chromium (run `npx playwright install chromium` once first).
 - `npm test`: Runs the test suite in `test/*.test.js` with the Node.js built-in test runner; CI runs it on Node 22/24 (`package.json` requires Node 22+; `.node-version` pins Render to 22).
 
 ## Coding Style & Naming Conventions

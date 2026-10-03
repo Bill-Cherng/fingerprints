@@ -29,11 +29,10 @@
             }
             
             async tryLoadSources() {
+                // 只載入與網頁同一個 server 提供的本地版本：
+                // 外部 CDN 的浮動版本（@4）沒有 SRI 檢查，CDN 出問題時會在本頁執行未經驗證的程式碼，能讀到登入表單輸入的密碼
                 const sources = [
-                    'lib/fingerprintjs.min.js', // 本地版本優先
-                    'https://openfpcdn.io/fingerprintjs/v4/iife.min.js',
-                    'https://cdn.jsdelivr.net/npm/@fingerprintjs/fingerprintjs@4/dist/fp.min.js',
-                    'https://unpkg.com/@fingerprintjs/fingerprintjs@4/dist/fp.min.js'
+                    'lib/fingerprintjs.min.js'
                 ];
                 
                 for (let i = 0; i < sources.length; i++) {

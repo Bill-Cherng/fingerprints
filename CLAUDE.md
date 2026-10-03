@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **啟動開發伺服器**: `npm run dev` (使用 nodemon 自動重啟)
 - **啟動生產伺服器**: `npm start`
 - **執行測試**: `npm test` (使用 Node.js 內建測試執行器)
+- **執行瀏覽器測試**: `npm run test:e2e` (Playwright + Chromium,首次需執行 `npx playwright install chromium`)
 
 ## 專案架構
 
@@ -23,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `index.html` - 單頁應用介面
   - `app.js` (1400+ 行) - 前端核心邏輯
   - `style.css` - 響應式樣式
-  - `lib/` - 第三方函式庫
+  - `lib/` - 第三方函式庫 (FingerprintJS 只從這裡載入,不使用外部 CDN)
 - **資料庫**: `fingerprints.db` (SQLite3,開發時自動建立)
 
 ### 資料庫結構
@@ -150,6 +151,7 @@ session({
 ## 測試與調試
 
 - 測試目前使用 Node.js 內建測試執行器 (`node --test`)
+- `test/`: 後端與 API 測試;`e2e/`: 以 Playwright 操作 Chromium 的瀏覽器測試 (表單送出、指紋採集、主題等前端行為),CI 另有 e2e job 執行
 - 調試端點: `GET /api/debug/fingerprint/:id` 可查看指紋資料 (大型元件值為雜湊)
 - 設定 `LOG_LEVEL=debug` 時,console 會輸出詳細的相似度計算過程
 
